@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-sidebar: #1e293b;
+  --color-bg-main: #f8fafc;
+  --color-border-theme: #e2e8f0;
+  --color-text-dark: #0f172a;
+  --color-text-light: #64748b;
+
+  --color-background: white;
+  --color-foreground: #0f172a;
+  --color-primary: #2563eb;
+  --color-primary-foreground: white;
+  --color-muted: #f1f5f9;
+  --color-muted-foreground: #64748b;
+  --color-accent: #f1f5f9;
+  --color-accent-foreground: #0f172a;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: white;
+  --color-border: #e2e8f0;
+  --color-input: #e2e8f0;
+  --color-ring: #2563eb;
+  --color-popover: white;
+  --color-popover-foreground: #0f172a;
+  --color-card: white;
+  --color-card-foreground: #0f172a;
+
+  --radius-lg: 0.75rem;
+  --radius-md: 0.5rem;
+  --radius-sm: 0.25rem;
+}
+
+@layer base {
+  body {
+    @apply bg-bg-main text-text-dark font-sans;
+  }
+}
+
+@layer components {
+  .status-pill {
+    @apply px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider;
+  }
+  
+  .status-active { @apply bg-green-100 text-green-700; }
+  .status-new { @apply bg-blue-100 text-blue-700; }
+  .status-urgent { @apply bg-red-100 text-red-700; }
+  .status-waiting { @apply bg-amber-100 text-amber-700; }
+}

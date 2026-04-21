@@ -1,0 +1,15 @@
+services:
+  taskflow:
+    image: ghcr.io/YOUR_GITHUB_OWNER/YOUR_REPO_NAME:latest
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DATA_DIR: /app/data
+      ADMIN_EMAILS: "you@example.com"
+    volumes:
+      - taskflow-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  taskflow-data:
