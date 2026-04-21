@@ -25,6 +25,7 @@ function withTimestamps<T extends Record<string, any>>(item: T): T {
     createdAt: timestamp(item.createdAt),
     updatedAt: timestamp(item.updatedAt),
     deadline: timestamp(item.deadline),
+    emailSentAt: timestamp(item.emailSentAt),
     attachments: (item.attachments || []).map((attachment: Attachment) => ({
       ...attachment,
       createdAt: timestamp(attachment.createdAt),
@@ -85,10 +86,11 @@ export async function updateUser(id: string, updates: Partial<Pick<UserProfile, 
   });
 }
 
-export async function listTickets(filter: string, currentUserId?: string, currentUserEmail?: string) {
+export async function listTickets(filter: string, currentUserId?: string, currentUserEmail?: string, search?: string) {
   const params = new URLSearchParams({ filter });
   if (currentUserId) params.set('currentUserId', currentUserId);
   if (currentUserEmail) params.set('currentUserEmail', currentUserEmail);
+  if (search?.trim()) params.set('search', search.trim());
   const tickets = await request<Ticket[]>(`/api/tickets?${params.toString()}`);
   return tickets.map((ticket) => withTimestamps(ticket));
 }
@@ -129,4 +131,16 @@ export async function uploadFile(file: File, onProgress?: (progress: number) => 
   });
   onProgress?.(100);
   return withTimestamps(attachment);
+}
+
+export async function importEmail(ticketId: string, file: File) {
+  const form = new FormData();
+  form.set('file', file);
+  return request<{ ticket: Ticket; comment: Comment | null; attachment: Attachment; parseError?: string }>(
+    `/api/tickets/${ticketId}/import-email`,
+    {
+      method: 'POST',
+      body: form,
+    },
+  );
 }

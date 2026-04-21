@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { nanoid } from 'nanoid';
-import type { Ticket, TicketPriority, UserProfile } from '../src/types';
+import type { Attachment, Comment, Ticket, TicketPriority, UserProfile } from '../src/types';
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3') as typeof import('better-sqlite3');
@@ -24,6 +24,11 @@ export interface NewCommentInput {
   content: string;
   isInternal: boolean;
   attachments?: unknown[];
+  sourceType?: 'manual' | 'email_import';
+  sourceFileName?: string;
+  emailSubject?: string;
+  emailFrom?: string;
+  emailSentAt?: string | null;
 }
 
 type SqliteDatabase = import('better-sqlite3').Database;
@@ -47,6 +52,10 @@ function parseJson<T>(value: unknown, fallback: T): T {
 
 function now() {
   return new Date().toISOString();
+}
+
+function toSqlLike(value: string) {
+  return `%${value.replace(/[%_]/g, '\\$&').toLowerCase()}%`;
 }
 
 function adminEmails() {
@@ -109,8 +118,19 @@ export class Store {
           content TEXT NOT NULL DEFAULT '',
           created_at TIMESTAMPTZ NOT NULL,
           is_internal BOOLEAN NOT NULL DEFAULT false,
-          attachments JSONB NOT NULL DEFAULT '[]'::jsonb
+          attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+          source_type TEXT NOT NULL DEFAULT 'manual',
+          source_file_name TEXT,
+          email_subject TEXT,
+          email_from TEXT,
+          email_sent_at TIMESTAMPTZ
         );
+
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'manual';
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS source_file_name TEXT;
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS email_subject TEXT;
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS email_from TEXT;
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS email_sent_at TIMESTAMPTZ;
       `);
       return;
     }
@@ -151,9 +171,20 @@ export class Store {
         created_at TEXT NOT NULL,
         is_internal INTEGER NOT NULL DEFAULT 0,
         attachments TEXT NOT NULL DEFAULT '[]',
+        source_type TEXT NOT NULL DEFAULT 'manual',
+        source_file_name TEXT,
+        email_subject TEXT,
+        email_from TEXT,
+        email_sent_at TEXT,
         FOREIGN KEY(ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
       );
     `);
+
+    this.ensureSqliteColumn('comments', 'source_type', "TEXT NOT NULL DEFAULT 'manual'");
+    this.ensureSqliteColumn('comments', 'source_file_name', 'TEXT');
+    this.ensureSqliteColumn('comments', 'email_subject', 'TEXT');
+    this.ensureSqliteColumn('comments', 'email_from', 'TEXT');
+    this.ensureSqliteColumn('comments', 'email_sent_at', 'TEXT');
   }
 
   async getOrCreateUser(email: string, displayName?: string): Promise<UserProfile> {
@@ -260,20 +291,48 @@ export class Store {
     return rows[0] || null;
   }
 
-  async listTickets(filter = 'all', currentUserId?: string, currentUserEmail?: string): Promise<Ticket[]> {
+  async listTickets(filter = 'all', currentUserId?: string, currentUserEmail?: string, search?: string): Promise<Ticket[]> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
     if (filter === 'assigned' && currentUserId) {
-      return this.queryTickets('WHERE assignee_id = ?', [currentUserId], 'ORDER BY created_at DESC');
+      conditions.push('assignee_id = ?');
+      params.push(currentUserId);
+    } else if (filter === 'archived') {
+      conditions.push("status IN ('closed', 'resolved')");
+    } else if (filter === 'requesters' && currentUserEmail) {
+      conditions.push('requester_email = ?');
+      params.push(currentUserEmail);
+    } else if (['new', 'open', 'in_progress', 'waiting', 'resolved', 'closed'].includes(filter)) {
+      conditions.push('status = ?');
+      params.push(filter);
+    } else {
+      conditions.push("status NOT IN ('closed', 'resolved')");
     }
-    if (filter === 'archived') {
-      return this.queryTickets("WHERE status IN ('closed', 'resolved')", [], 'ORDER BY created_at DESC');
+
+    if (search?.trim()) {
+      const term = toSqlLike(search.trim());
+      conditions.push(`(
+        LOWER(title) LIKE ? ESCAPE '\\'
+        OR LOWER(description) LIKE ? ESCAPE '\\'
+        OR LOWER(id) LIKE ? ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1 FROM comments c
+          WHERE c.ticket_id = tickets.id
+            AND (
+              LOWER(c.content) LIKE ? ESCAPE '\\'
+              OR LOWER(COALESCE(c.email_subject, '')) LIKE ? ESCAPE '\\'
+              OR LOWER(COALESCE(c.email_from, '')) LIKE ? ESCAPE '\\'
+              OR LOWER(COALESCE(c.source_file_name, '')) LIKE ? ESCAPE '\\'
+            )
+        )
+      )`);
+      params.push(term, term, term, term, term, term, term);
     }
-    if (filter === 'requesters' && currentUserEmail) {
-      return this.queryTickets('WHERE requester_email = ?', [currentUserEmail], 'ORDER BY created_at DESC');
-    }
-    if (['new', 'open', 'in_progress', 'waiting', 'resolved', 'closed'].includes(filter)) {
-      return this.queryTickets('WHERE status = ?', [filter], 'ORDER BY created_at DESC');
-    }
-    return this.queryTickets("WHERE status NOT IN ('closed', 'resolved')", [], 'ORDER BY status ASC, created_at DESC');
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const order = filter === 'all' ? 'ORDER BY status ASC, created_at DESC' : 'ORDER BY created_at DESC';
+    return this.queryTickets(where, params, order);
   }
 
   async updateTicket(id: string, updates: Partial<Ticket>): Promise<Ticket | null> {
@@ -308,13 +367,17 @@ export class Store {
     const rows = this.pg
       ? (await this.pg.query(
         `SELECT id, ticket_id AS "ticketId", author_id AS "authorId", author_name AS "authorName", content,
-                created_at AS "createdAt", is_internal AS "isInternal", attachments
+                created_at AS "createdAt", is_internal AS "isInternal", attachments,
+                source_type AS "sourceType", source_file_name AS "sourceFileName",
+                email_subject AS "emailSubject", email_from AS "emailFrom", email_sent_at AS "emailSentAt"
            FROM comments WHERE ticket_id = $1 ORDER BY created_at ASC`,
         [ticketId],
       )).rows
       : this.sqlite!.prepare(
         `SELECT id, ticket_id AS ticketId, author_id AS authorId, author_name AS authorName, content,
-                created_at AS createdAt, is_internal AS isInternal, attachments
+                created_at AS createdAt, is_internal AS isInternal, attachments,
+                source_type AS sourceType, source_file_name AS sourceFileName,
+                email_subject AS emailSubject, email_from AS emailFrom, email_sent_at AS emailSentAt
            FROM comments WHERE ticket_id = ? ORDER BY created_at ASC`,
       ).all(ticketId);
 
@@ -325,24 +388,96 @@ export class Store {
     }));
   }
 
-  async createComment(input: NewCommentInput) {
+  async createComment(input: NewCommentInput): Promise<Comment | undefined> {
     const id = nanoid(16);
     const timestamp = now();
     if (this.pg) {
       await this.pg.query(
-        `INSERT INTO comments (id, ticket_id, author_id, author_name, content, created_at, is_internal, attachments)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [id, input.ticketId, input.authorId, input.authorName, input.content, timestamp, input.isInternal, json(input.attachments)],
+        `INSERT INTO comments (
+            id, ticket_id, author_id, author_name, content, created_at, is_internal, attachments,
+            source_type, source_file_name, email_subject, email_from, email_sent_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13)`,
+        [
+          id,
+          input.ticketId,
+          input.authorId,
+          input.authorName,
+          input.content,
+          timestamp,
+          input.isInternal,
+          json(input.attachments),
+          input.sourceType || 'manual',
+          input.sourceFileName || null,
+          input.emailSubject || null,
+          input.emailFrom || null,
+          input.emailSentAt || null,
+        ],
       );
     } else {
       this.sqlite!.prepare(
-        `INSERT INTO comments (id, ticket_id, author_id, author_name, content, created_at, is_internal, attachments)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(id, input.ticketId, input.authorId, input.authorName, input.content, timestamp, input.isInternal ? 1 : 0, json(input.attachments));
+        `INSERT INTO comments (
+           id, ticket_id, author_id, author_name, content, created_at, is_internal, attachments,
+           source_type, source_file_name, email_subject, email_from, email_sent_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        input.ticketId,
+        input.authorId,
+        input.authorName,
+        input.content,
+        timestamp,
+        input.isInternal ? 1 : 0,
+        json(input.attachments),
+        input.sourceType || 'manual',
+        input.sourceFileName || null,
+        input.emailSubject || null,
+        input.emailFrom || null,
+        input.emailSentAt || null,
+      );
     }
 
     const comments = await this.listComments(input.ticketId);
     return comments.find((comment) => comment.id === id);
+  }
+
+  async importEmailToTicket(ticketId: string, author: Pick<UserProfile, 'uid' | 'displayName'>, attachment: Attachment, email: {
+    subject?: string | null;
+    from?: string | null;
+    sentAt?: string | null;
+    body?: string | null;
+    parseError?: string | null;
+  }) {
+    const ticket = await this.getTicket(ticketId);
+    if (!ticket) return null;
+
+    const existingAttachments = ticket.attachments || [];
+    const dedupedAttachments = [...existingAttachments, attachment];
+    await this.updateTicket(ticketId, { attachments: dedupedAttachments });
+
+    const content = email.body?.trim()
+      ? email.body.trim()
+      : 'Parsing unavailable for this imported Outlook email. The original .msg file is attached for reference.';
+
+    const comment = await this.createComment({
+      ticketId,
+      authorId: author.uid,
+      authorName: author.displayName,
+      content,
+      isInternal: false,
+      attachments: [attachment],
+      sourceType: 'email_import',
+      sourceFileName: attachment.name,
+      emailSubject: email.subject || undefined,
+      emailFrom: email.from || undefined,
+      emailSentAt: email.sentAt || undefined,
+    });
+
+    return {
+      ticket: await this.getTicket(ticketId),
+      comment,
+      attachment,
+      parseError: email.parseError || undefined,
+    };
   }
 
   private async getUserByEmail(email: string): Promise<UserProfile | null> {
@@ -381,5 +516,12 @@ export class Store {
       tags: parseJson(row.tags, []),
       attachments: parseJson(row.attachments, []),
     } as Ticket;
+  }
+
+  private ensureSqliteColumn(table: string, column: string, definition: string) {
+    const columns = this.sqlite!.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some((entry) => entry.name === column)) {
+      this.sqlite!.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 }

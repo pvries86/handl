@@ -1,18 +1,22 @@
 import React, { useState } from 'react';
+import { Loader2, Paperclip, Plus } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuth } from '../AuthContext';
+import { Attachment, TicketPriority } from '../types';
+import { createTicket, uploadFile } from '../lib/api';
+import { FileViewer } from './FileViewer';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-  DialogFooter,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -20,11 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Loader2, Paperclip } from 'lucide-react';
-import { toast } from 'sonner';
-import { TicketPriority, Attachment } from '../types';
-import { FileViewer } from './FileViewer';
-import { createTicket, uploadFile } from '../lib/api';
+import { Textarea } from '@/components/ui/textarea';
 
 export function CreateTicketDialog() {
   const { profile } = useAuth();
@@ -45,21 +45,21 @@ export function CreateTicketDialog() {
   const handleFileUpload = async (files: File[]) => {
     setUploading(true);
     setUploadProgress(0);
-    const newAttachments: Attachment[] = [...attachments];
+    const nextAttachments: Attachment[] = [...attachments];
 
-    for (const file of files) {
-      try {
-        newAttachments.push(await uploadFile(file, setUploadProgress));
+    try {
+      for (const file of files) {
+        nextAttachments.push(await uploadFile(file, setUploadProgress));
         toast.success(`Uploaded ${file.name}`);
-      } catch (error: any) {
-        console.error('Upload error:', error);
-        toast.error(`Failed to upload ${file.name}: ${error.message || 'Unknown error'}`);
       }
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      toast.error(`Failed to upload file: ${error.message || 'Unknown error'}`);
+    } finally {
+      setAttachments(nextAttachments);
+      setUploading(false);
+      setUploadProgress(0);
     }
-
-    setAttachments(newAttachments);
-    setUploading(false);
-    setUploadProgress(0);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -74,7 +74,7 @@ export function CreateTicketDialog() {
       await createTicket({
         ...formData,
         tags: [],
-        attachments
+        attachments,
       });
       toast.success('Ticket created successfully');
       setOpen(false);
@@ -160,22 +160,21 @@ export function CreateTicketDialog() {
               />
             </div>
 
-            {/* Attachments List */}
             {attachments.length > 0 && (
               <div className="space-y-2">
                 <Label className="text-xs">Attachments</Label>
                 <div className="flex flex-wrap gap-2">
                   {attachments.map((file, i) => (
                     <div key={i} className="flex items-center gap-2 bg-slate-100 px-2 py-1 rounded text-[10px] border group">
-                      <button 
+                      <button
                         type="button"
                         onClick={() => setViewingFile(file)}
                         className="truncate max-w-[100px] hover:text-primary hover:underline"
                       >
                         {file.name}
                       </button>
-                      <button 
-                        type="button" 
+                      <button
+                        type="button"
                         onClick={() => setAttachments(attachments.filter((_, idx) => idx !== i))}
                         className="text-red-500 hover:text-red-700 font-bold"
                       >
@@ -189,7 +188,7 @@ export function CreateTicketDialog() {
 
             <FileViewer file={viewingFile} onClose={() => setViewingFile(null)} />
 
-            <div 
+            <div
               className={`flex flex-col items-center justify-center gap-2 p-6 border-2 border-dashed rounded-lg transition-colors cursor-pointer ${
                 uploading ? 'bg-slate-100 border-slate-300' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
               }`}
@@ -197,9 +196,7 @@ export function CreateTicketDialog() {
               onDrop={(e) => {
                 e.preventDefault();
                 const files = Array.from(e.dataTransfer.files) as File[];
-                if (files.length > 0) {
-                  handleFileUpload(files);
-                }
+                if (files.length > 0) handleFileUpload(files);
               }}
               onClick={() => {
                 if (uploading) return;
@@ -217,8 +214,8 @@ export function CreateTicketDialog() {
                 <div className="flex flex-col items-center gap-2">
                   <Loader2 className="w-6 h-6 animate-spin text-primary" />
                   <div className="w-32 h-1 bg-slate-200 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-primary transition-all duration-300" 
+                    <div
+                      className="h-full bg-primary transition-all duration-300"
                       style={{ width: `${uploadProgress}%` }}
                     />
                   </div>
@@ -229,7 +226,7 @@ export function CreateTicketDialog() {
               )}
               <div className="text-center">
                 <p className="text-xs font-medium">Click or drag files here to attach</p>
-                <p className="text-[10px] text-slate-400 mt-1">Supports images, PDFs, and Outlook emails</p>
+                <p className="text-[10px] text-slate-400 mt-1">Supports images, PDFs, and reference files</p>
               </div>
             </div>
           </div>

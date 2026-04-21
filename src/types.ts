@@ -35,6 +35,11 @@ export interface Comment {
   createdAt: any;
   isInternal: boolean;
   attachments?: Attachment[];
+  sourceType?: 'manual' | 'email_import';
+  sourceFileName?: string;
+  emailSubject?: string;
+  emailFrom?: string;
+  emailSentAt?: any;
 }
 
 export interface UserProfile {

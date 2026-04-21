@@ -1,13 +1,13 @@
 import React from 'react';
+import { Download, ExternalLink, File as FileIcon, FileText, X } from 'lucide-react';
+import { Attachment } from '../types';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Download, ExternalLink, X, FileText, File as FileIcon } from 'lucide-react';
-import { Attachment } from '../types';
 
 interface FileViewerProps {
   file: Attachment | null;
@@ -30,7 +30,7 @@ export function FileViewer({ file, onClose }: FileViewerProps) {
             </div>
             <div className="min-w-0">
               <DialogTitle className="text-sm font-bold truncate">{file.name}</DialogTitle>
-              <p className="text-[10px] text-text-light">{(file.size / 1024).toFixed(1)} KB • {file.type}</p>
+              <p className="text-[10px] text-text-light">{(file.size / 1024).toFixed(1)} KB - {file.type}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -52,15 +52,15 @@ export function FileViewer({ file, onClose }: FileViewerProps) {
 
         <div className="flex-1 bg-slate-50 overflow-auto flex items-center justify-center p-8">
           {isImage ? (
-            <img 
-              src={file.url} 
-              alt={file.name} 
+            <img
+              src={file.url}
+              alt={file.name}
               className="max-w-full max-h-full object-contain shadow-lg rounded-lg bg-white"
               referrerPolicy="no-referrer"
             />
           ) : isPDF ? (
-            <iframe 
-              src={`${file.url}#toolbar=0`} 
+            <iframe
+              src={`${file.url}#toolbar=0`}
               className="w-full h-full border-none rounded-lg shadow-lg bg-white"
               title={file.name}
             />
@@ -71,7 +71,7 @@ export function FileViewer({ file, onClose }: FileViewerProps) {
               </div>
               <h3 className="font-bold text-text-dark mb-2">Preview not available</h3>
               <p className="text-xs text-text-light mb-6">
-                This file type ({file.type}) cannot be previewed directly in the browser. 
+                This file type ({file.type}) cannot be previewed directly in the browser.
                 Please download it to view the content.
               </p>
               <Button asChild className="w-full">

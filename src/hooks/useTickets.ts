@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Ticket } from '../types';
 import { listTickets } from '../lib/api';
 
-export function useTickets(filter: string = 'all', currentUserId?: string, currentUserEmail?: string) {
+export function useTickets(filter: string = 'all', currentUserId?: string, currentUserEmail?: string, searchQuery?: string) {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -10,7 +10,7 @@ export function useTickets(filter: string = 'all', currentUserId?: string, curre
     let cancelled = false;
     setLoading(true);
 
-    listTickets(filter, currentUserId, currentUserEmail)
+    listTickets(filter, currentUserId, currentUserEmail, searchQuery)
       .then((ticketData) => {
         if (!cancelled) setTickets(ticketData);
       })
@@ -23,7 +23,7 @@ export function useTickets(filter: string = 'all', currentUserId?: string, curre
       });
 
     const interval = window.setInterval(() => {
-      listTickets(filter, currentUserId, currentUserEmail)
+      listTickets(filter, currentUserId, currentUserEmail, searchQuery)
         .then((ticketData) => !cancelled && setTickets(ticketData))
         .catch((error) => console.error('Failed to refresh tickets', error));
     }, 5000);
@@ -32,7 +32,7 @@ export function useTickets(filter: string = 'all', currentUserId?: string, curre
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [filter, currentUserId, currentUserEmail]);
+  }, [filter, currentUserId, currentUserEmail, searchQuery]);
 
   return { tickets, loading };
 }

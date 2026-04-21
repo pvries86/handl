@@ -52,7 +52,7 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginName, setLoginName] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
-  const { tickets, loading: ticketsLoading } = useTickets(activeTab, user?.uid, user?.email || undefined);
+  const { tickets, loading: ticketsLoading } = useTickets(activeTab, user?.uid, user?.email || undefined, searchQuery);
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
 
   if (authLoading) {
@@ -115,11 +115,7 @@ export default function App() {
     );
   }
 
-  const filteredTickets = tickets.filter(t => 
-    t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    t.requesterName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    t.id.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredTickets = tickets;
 
   return (
     <div className="h-screen flex overflow-hidden bg-bg-main">
@@ -188,7 +184,7 @@ export default function App() {
           <div className="relative w-[300px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-light" />
             <Input 
-              placeholder="Search tickets, users, or content..." 
+              placeholder="Search tickets, descriptions, or updates..." 
               className="pl-9 bg-[#f1f5f9] border-border-theme h-9 text-sm"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}

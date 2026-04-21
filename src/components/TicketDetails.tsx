@@ -1,18 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { format } from 'date-fns';
+import { Loader2, Paperclip } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuth } from '../AuthContext';
-import { Ticket, Comment, TicketStatus, TicketPriority, Attachment } from '../types';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
+import { useAgents } from '../hooks/useAgents';
+import { Attachment, Comment, Ticket, TicketPriority, TicketStatus } from '../types';
+import { createComment, importEmail, listComments, updateTicket, uploadFile } from '../lib/api';
+import { FileViewer } from './FileViewer';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -20,31 +17,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { 
-  Clock, 
-  User, 
-  Send, 
-  Paperclip, 
-  History, 
-  MessageSquare,
-  AlertCircle,
-  CheckCircle2,
-  MoreVertical,
-  Loader2
-} from 'lucide-react';
-import { format } from 'date-fns';
-import { toast } from 'sonner';
-
-import { useAgents } from '../hooks/useAgents';
-import { FileViewer } from './FileViewer';
-import { createComment, listComments, updateTicket, uploadFile } from '../lib/api';
+import { Textarea } from '@/components/ui/textarea';
 
 interface TicketDetailsProps {
   ticket: Ticket;
   onClose: () => void;
 }
 
-export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
+export function TicketDetailsDialog({ ticket }: TicketDetailsProps) {
   const { profile } = useAuth();
   const { agents } = useAgents();
   const [comments, setComments] = useState<Comment[]>([]);
@@ -61,7 +41,9 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
 
     const load = () => {
       listComments(ticket.id)
-        .then((items) => !cancelled && setComments(items))
+        .then((items) => {
+          if (!cancelled) setComments(items);
+        })
         .catch((error) => console.error('Failed to load comments', error));
     };
 
@@ -78,7 +60,7 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
     try {
       await updateTicket(ticket.id, { status: newStatus });
       toast.success(`Status updated to ${newStatus}`);
-    } catch (error) {
+    } catch {
       toast.error('Failed to update status');
     }
   };
@@ -87,13 +69,23 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
     try {
       await updateTicket(ticket.id, { priority: newPriority });
       toast.success(`Priority updated to ${newPriority}`);
-    } catch (error) {
+    } catch {
       toast.error('Failed to update priority');
     }
   };
 
   const handleAssigneeChange = async (newAssigneeId: string) => {
-    const agent = agents.find(a => a.uid === newAssigneeId);
+    if (newAssigneeId === 'unassigned') {
+      try {
+        await updateTicket(ticket.id, { assigneeId: undefined, assigneeName: undefined });
+        toast.success('Ticket unassigned');
+      } catch {
+        toast.error('Failed to update assignee');
+      }
+      return;
+    }
+
+    const agent = agents.find((item) => item.uid === newAssigneeId);
     if (!agent) return;
 
     try {
@@ -102,9 +94,13 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
         assigneeName: agent.displayName,
       });
       toast.success(`Ticket assigned to ${agent.displayName}`);
-    } catch (error) {
+    } catch {
       toast.error('Failed to update assignee');
     }
+  };
+
+  const refreshComments = async () => {
+    setComments(await listComments(ticket.id));
   };
 
   const handleFileUpload = async (files: File[]) => {
@@ -112,19 +108,30 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
     setUploadProgress(0);
     const uploaded: Attachment[] = [...newAttachments];
 
-    for (const file of files) {
-      try {
+    try {
+      for (const file of files) {
+        if (file.name.toLowerCase().endsWith('.msg')) {
+          const result = await importEmail(ticket.id, file);
+          if (result.parseError) {
+            toast.warning(`Imported ${file.name}, but parsing was limited`);
+          } else {
+            toast.success(`Imported email from ${file.name}`);
+          }
+          await refreshComments();
+          continue;
+        }
+
         uploaded.push(await uploadFile(file, setUploadProgress));
         toast.success(`Uploaded ${file.name}`);
-      } catch (error: any) {
-        console.error('Upload error:', error);
-        toast.error(`Failed to upload ${file.name}: ${error.message || 'Unknown error'}`);
       }
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      toast.error(`Failed to upload file: ${error.message || 'Unknown error'}`);
+    } finally {
+      setNewAttachments(uploaded);
+      setUploading(false);
+      setUploadProgress(0);
     }
-
-    setNewAttachments(uploaded);
-    setUploading(false);
-    setUploadProgress(0);
   };
 
   const handleAddComment = async (e: React.FormEvent) => {
@@ -139,19 +146,19 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
         authorName: profile?.displayName,
         content: newComment,
         isInternal,
-        attachments: newAttachments
+        attachments: newAttachments,
+        sourceType: 'manual',
       });
-      
-      // Update ticket attachments list
+
       await updateTicket(ticket.id, {
-        attachments: [...(ticket.attachments || []), ...newAttachments]
+        attachments: [...(ticket.attachments || []), ...newAttachments],
       });
 
       setNewComment('');
       setNewAttachments([]);
-      setComments(await listComments(ticket.id));
+      await refreshComments();
       toast.success('Update saved');
-    } catch (error) {
+    } catch {
       toast.error('Failed to add update');
     } finally {
       setLoading(false);
@@ -168,7 +175,7 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
           <h1 className="text-2xl font-bold text-text-dark leading-tight">{ticket.title}</h1>
         </div>
         <Badge variant="outline" className={`status-pill px-3 py-1 text-xs ${
-          ticket.priority === 'critical' || ticket.priority === 'high' ? 'status-urgent' : 
+          ticket.priority === 'critical' || ticket.priority === 'high' ? 'status-urgent' :
           ticket.status === 'new' ? 'status-new' : 'status-active'
         }`}>
           {ticket.status.replace('_', ' ')}
@@ -177,7 +184,6 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
 
       <ScrollArea className="flex-1 min-h-0">
         <div className="p-8 space-y-8 max-w-4xl">
-          {/* Grid Info */}
           <div className="grid grid-cols-2 gap-6 p-6 bg-[#f8fafc] rounded-xl border border-border-theme">
             <div>
               <div className="text-[10px] font-bold uppercase tracking-widest text-text-light mb-1">Requestor</div>
@@ -197,7 +203,7 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="unassigned">Unassigned</SelectItem>
-                  {agents.map(agent => (
+                  {agents.map((agent) => (
                     <SelectItem key={agent.uid} value={agent.uid}>{agent.displayName}</SelectItem>
                   ))}
                 </SelectContent>
@@ -205,23 +211,20 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
             </div>
             <div>
               <div className="text-[10px] font-bold uppercase tracking-widest text-text-light mb-1">Priority</div>
-              <div className="flex items-center gap-2">
-                <Select value={ticket.priority} onValueChange={handlePriorityChange}>
-                  <SelectTrigger className="h-7 text-xs w-32 bg-white">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Low</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                    <SelectItem value="critical">Critical</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              <Select value={ticket.priority} onValueChange={handlePriorityChange}>
+                <SelectTrigger className="h-7 text-xs w-32 bg-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                  <SelectItem value="critical">Critical</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
-          {/* Description */}
           <section>
             <h4 className="text-[10px] font-bold uppercase tracking-widest text-text-light mb-3">Description</h4>
             <div className="text-sm text-text-dark leading-relaxed whitespace-pre-wrap">
@@ -229,7 +232,6 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
             </div>
           </section>
 
-          {/* Attachments Section */}
           {ticket.attachments && ticket.attachments.length > 0 && (
             <section>
               <h4 className="text-[10px] font-bold uppercase tracking-widest text-text-light mb-3">Attachments</h4>
@@ -243,12 +245,12 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
                       </div>
                       <span className="text-[10px] text-text-light shrink-0">({(file.size / 1024).toFixed(1)} KB)</span>
                     </div>
-                    
+
                     {file.type.startsWith('image/') && (
                       <div className="relative aspect-video w-full overflow-hidden rounded border bg-slate-100">
-                        <img 
-                          src={file.url} 
-                          alt={file.name} 
+                        <img
+                          src={file.url}
+                          alt={file.name}
                           className="w-full h-full object-cover"
                           referrerPolicy="no-referrer"
                         />
@@ -257,18 +259,18 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
 
                     {file.name.toLowerCase().endsWith('.msg') && (
                       <div className="p-2 bg-amber-50 rounded border border-amber-100 text-[10px] text-amber-700">
-                        Outlook email (.msg) - Browsers cannot open these directly. Please use "Download" to view in Outlook.
+                        Outlook email (.msg). The original file stays attached after import for reference.
                       </div>
                     )}
 
                     <div className="flex gap-2 mt-1">
-                      <button 
+                      <button
                         onClick={() => setViewingFile(file)}
                         className="text-[10px] font-bold text-primary hover:underline"
                       >
                         View Full
                       </button>
-                      <button 
+                      <button
                         onClick={() => {
                           navigator.clipboard.writeText(file.url);
                           toast.success('Link copied to clipboard');
@@ -277,8 +279,8 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
                       >
                         Copy Link
                       </button>
-                      <a 
-                        href={file.url} 
+                      <a
+                        href={file.url}
                         download={file.name}
                         className="text-[10px] font-bold text-text-light hover:underline"
                       >
@@ -291,31 +293,49 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
             </section>
           )}
 
-          {/* File Viewer Modal */}
           <FileViewer file={viewingFile} onClose={() => setViewingFile(null)} />
 
-          {/* Activity Log */}
           <section className="space-y-4">
             <h4 className="text-[10px] font-bold uppercase tracking-widest text-text-light">Activity Log & Updates</h4>
             <div className="space-y-4 border-l-2 border-border-theme pl-6">
               {comments.map((comment) => (
                 <div key={comment.id} className={`relative ${comment.isInternal ? 'bg-amber-50/50 p-3 rounded-lg border border-amber-100' : ''}`}>
                   <div className="absolute -left-[31px] top-1.5 w-2 h-2 rounded-full bg-border-theme border-4 border-white" />
-                  <div className="flex items-center gap-2 text-[11px] mb-1">
+                  <div className="flex items-center gap-2 text-[11px] mb-1 flex-wrap">
                     <span className="font-bold">{comment.authorName}</span>
                     <span className="text-text-light">
                       {comment.createdAt?.toDate ? format(comment.createdAt.toDate(), 'MMM d, HH:mm') : 'Just now'}
                     </span>
+                    {comment.sourceType === 'email_import' && (
+                      <Badge variant="outline" className="text-[8px] h-4 uppercase tracking-tighter bg-blue-50 text-blue-700 border-blue-200">
+                        Imported Email
+                      </Badge>
+                    )}
                     {comment.isInternal && (
-                      <Badge variant="outline" className="text-[8px] h-4 uppercase tracking-tighter bg-amber-100 text-amber-700 border-amber-200">Internal Note</Badge>
+                      <Badge variant="outline" className="text-[8px] h-4 uppercase tracking-tighter bg-amber-100 text-amber-700 border-amber-200">
+                        Internal Note
+                      </Badge>
                     )}
                   </div>
-                  <p className="text-sm text-text-dark">{comment.content}</p>
+
+                  {comment.sourceType === 'email_import' && (
+                    <div className="mb-2 text-[11px] text-text-light space-y-0.5">
+                      {comment.emailSubject && <div><span className="font-semibold text-text-dark">Subject:</span> {comment.emailSubject}</div>}
+                      {comment.emailFrom && <div><span className="font-semibold text-text-dark">From:</span> {comment.emailFrom}</div>}
+                      {comment.emailSentAt?.toDate && (
+                        <div><span className="font-semibold text-text-dark">Sent:</span> {format(comment.emailSentAt.toDate(), 'MMM d, yyyy HH:mm')}</div>
+                      )}
+                      {comment.sourceFileName && <div><span className="font-semibold text-text-dark">File:</span> {comment.sourceFileName}</div>}
+                    </div>
+                  )}
+
+                  <p className="text-sm text-text-dark whitespace-pre-wrap">{comment.content}</p>
+
                   {comment.attachments && comment.attachments.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-2">
                       {comment.attachments.map((file, idx) => (
-                        <button 
-                          key={idx} 
+                        <button
+                          key={idx}
                           onClick={() => setViewingFile(file)}
                           className="text-[10px] text-primary hover:underline flex items-center gap-1 bg-slate-50 px-2 py-1 rounded border border-slate-100"
                         >
@@ -329,25 +349,23 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
             </div>
           </section>
 
-          {/* Update Section */}
           <section className="space-y-4 pt-4">
             <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Add Update</div>
             <form onSubmit={handleAddComment} className="space-y-4">
-              <Textarea 
-                placeholder="Add a private note or response to requestor..." 
+              <Textarea
+                placeholder="Add a private note or response to requestor..."
                 className="min-h-[120px] bg-white border-border-theme rounded-xl p-4 text-sm focus-visible:ring-primary"
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
               />
-              
-              {/* New Attachments Preview */}
+
               {newAttachments.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {newAttachments.map((file, i) => (
                     <div key={i} className="flex items-center gap-2 bg-slate-100 px-2 py-1 rounded text-[10px] border">
                       <span className="truncate max-w-[100px]">{file.name}</span>
-                      <button 
-                        type="button" 
+                      <button
+                        type="button"
                         onClick={() => setNewAttachments(newAttachments.filter((_, idx) => idx !== i))}
                         className="text-red-500 hover:text-red-700"
                       >
@@ -358,7 +376,7 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
                 </div>
               )}
 
-              <div 
+              <div
                 className={`border-2 border-dashed border-border-theme p-6 text-center rounded-xl transition-all cursor-pointer ${
                   uploading ? 'bg-slate-100 border-slate-300' : 'bg-[#fafafa] text-text-light text-sm hover:bg-slate-50'
                 }`}
@@ -384,25 +402,47 @@ export function TicketDetailsDialog({ ticket, onClose }: TicketDetailsProps) {
                   <div className="flex flex-col items-center gap-2">
                     <Loader2 className="w-6 h-6 animate-spin text-primary" />
                     <div className="w-32 h-1 bg-slate-200 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-primary transition-all duration-300" 
+                      <div
+                        className="h-full bg-primary transition-all duration-300"
                         style={{ width: `${uploadProgress}%` }}
                       />
                     </div>
                     <p className="text-[10px] font-medium text-slate-500">{Math.round(uploadProgress)}%</p>
                   </div>
                 ) : (
-                  "Drag and drop Outlook emails or attachments here to link them to this ticket"
+                  <div className="space-y-1">
+                    <p>Drag and drop Outlook emails or attachments here</p>
+                    <p className="text-[11px]">`.msg` files become searchable updates and stay attached to the ticket.</p>
+                  </div>
                 )}
+              </div>
+
+              <div className="flex justify-start">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = '.msg';
+                    input.onchange = (e) => {
+                      const files = Array.from((e.target as HTMLInputElement).files || []);
+                      if (files.length > 0) handleFileUpload(files);
+                    };
+                    input.click();
+                  }}
+                >
+                  Import Email (.msg)
+                </Button>
               </div>
 
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   {profile?.role !== 'user' && (
                     <div className="flex items-center gap-2">
-                      <input 
-                        type="checkbox" 
-                        id="internal-note" 
+                      <input
+                        type="checkbox"
+                        id="internal-note"
                         checked={isInternal}
                         onChange={(e) => setIsInternal(e.target.checked)}
                         className="w-4 h-4 rounded border-border-theme text-primary focus:ring-primary"

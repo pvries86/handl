@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
+import MsgReader from '@kenjiuno/msgreader';
 import { Store } from './store';
+import type { Attachment } from '../src/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -39,6 +41,20 @@ async function getRequestUser(req: express.Request) {
   return uid ? store.getUser(uid) : null;
 }
 
+async function requireUser(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const user = await getRequestUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    res.locals.user = user;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   try {
     const user = await getRequestUser(req);
@@ -51,6 +67,31 @@ async function requireAdmin(req: express.Request, res: express.Response, next: e
   } catch (error) {
     next(error);
   }
+}
+
+function createAttachmentFromUpload(file: Express.Multer.File): Attachment {
+  return {
+    name: file.originalname,
+    url: `/uploads/${file.filename}`,
+    type: file.mimetype || 'application/octet-stream',
+    size: file.size,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function normalizeEmailBody(body: unknown) {
+  if (typeof body !== 'string') return '';
+  return body.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function parseMsgFile(buffer: Buffer) {
+  const parsed = new MsgReader(buffer).getFileData();
+  return {
+    subject: parsed.subject || null,
+    from: parsed.senderEmail || parsed.senderName || null,
+    sentAt: parsed.messageDeliveryTime || parsed.clientSubmitTime || parsed.creationTime || null,
+    body: normalizeEmailBody(parsed.body),
+  };
 }
 
 app.get('/api/health', (_req, res) => {
@@ -121,6 +162,7 @@ app.get('/api/tickets', async (req, res, next) => {
       String(req.query.filter || 'all'),
       req.query.currentUserId ? String(req.query.currentUserId) : undefined,
       req.query.currentUserEmail ? String(req.query.currentUserEmail) : undefined,
+      req.query.search ? String(req.query.search) : undefined,
     );
     res.json(tickets);
   } catch (error) {
@@ -166,19 +208,48 @@ app.post('/api/tickets/:id/comments', async (req, res, next) => {
   }
 });
 
+app.post('/api/tickets/:id/import-email', requireUser, upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: 'No file uploaded' });
+      return;
+    }
+    if (!req.file.originalname.toLowerCase().endsWith('.msg')) {
+      res.status(400).json({ error: 'Only Outlook .msg files can be imported as email' });
+      return;
+    }
+
+    const attachment = createAttachmentFromUpload(req.file);
+    let parsedEmail: { subject?: string | null; from?: string | null; sentAt?: string | null; body?: string | null; parseError?: string | null };
+
+    try {
+      parsedEmail = parseMsgFile(fs.readFileSync(req.file.path));
+    } catch (error) {
+      parsedEmail = {
+        body: '',
+        parseError: error instanceof Error ? error.message : 'Unable to parse Outlook email',
+      };
+    }
+
+    const result = await store.importEmailToTicket(req.params.id, res.locals.user, attachment, parsedEmail);
+    if (!result) {
+      res.status(404).json({ error: 'Ticket not found' });
+      return;
+    }
+
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/uploads', upload.single('file'), (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: 'No file uploaded' });
     return;
   }
 
-  res.status(201).json({
-    name: req.file.originalname,
-    url: `/uploads/${req.file.filename}`,
-    type: req.file.mimetype || 'application/octet-stream',
-    size: req.file.size,
-    createdAt: new Date().toISOString(),
-  });
+  res.status(201).json(createAttachmentFromUpload(req.file));
 });
 
 if (fs.existsSync(distDir)) {
