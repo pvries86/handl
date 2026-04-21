@@ -27,6 +27,7 @@ import { format } from 'date-fns';
 import { CreateTicketDialog } from './components/CreateTicket';
 import { TicketDetailsDialog } from './components/TicketDetails';
 import { Toaster } from '@/components/ui/sonner';
+import { UserManagement } from './components/UserManagement';
 
 const statusColors: Record<TicketStatus, string> = {
   new: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
@@ -139,6 +140,7 @@ export default function App() {
             { id: 'assigned', label: 'Assigned to Me', icon: UserIcon },
             { id: 'archived', label: 'Archived Tasks', icon: History },
             { id: 'requesters', label: 'Requesters', icon: Mail },
+            ...(profile?.role === 'admin' ? [{ id: 'users', label: 'Users', icon: UserIcon }] : []),
           ].map((item) => (
             <div 
               key={item.id}
@@ -178,6 +180,10 @@ export default function App() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0">
+        {activeTab === 'users' ? (
+          <UserManagement />
+        ) : (
+          <>
         <header className="h-16 bg-white border-b border-border-theme flex items-center justify-between px-6 shrink-0">
           <div className="relative w-[300px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-light" />
@@ -271,6 +277,8 @@ export default function App() {
             )}
           </main>
         </div>
+          </>
+        )}
       </div>
     </div>
   );

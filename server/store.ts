@@ -194,6 +194,42 @@ export class Store {
     return row ? (row as UserProfile) : null;
   }
 
+  async listUsers(): Promise<UserProfile[]> {
+    const rows = this.pg
+      ? (await this.pg.query(
+        'SELECT uid, email, display_name AS "displayName", photo_url AS "photoURL", role FROM users ORDER BY display_name, email',
+      )).rows
+      : this.sqlite!.prepare(
+        'SELECT uid, email, display_name AS displayName, photo_url AS photoURL, role FROM users ORDER BY display_name, email',
+      ).all();
+    return rows as UserProfile[];
+  }
+
+  async updateUser(uid: string, updates: Partial<Pick<UserProfile, 'displayName' | 'role' | 'photoURL'>>): Promise<UserProfile | null> {
+    const allowed: Record<string, string> = {
+      displayName: 'display_name',
+      role: 'role',
+      photoURL: 'photo_url',
+    };
+    const entries = Object.entries(updates).filter(([key, value]) => key in allowed && value !== undefined);
+
+    if (entries.length === 0) return this.getUser(uid);
+
+    if (this.pg) {
+      const values = entries.map(([, value]) => value);
+      const assignments = entries.map(([key], index) => `${allowed[key]} = $${index + 1}`).join(', ');
+      values.push(uid);
+      await this.pg.query(`UPDATE users SET ${assignments} WHERE uid = $${entries.length + 1}`, values);
+    } else {
+      const values = entries.map(([, value]) => value);
+      const assignments = entries.map(([key]) => `${allowed[key]} = ?`).join(', ');
+      values.push(uid);
+      this.sqlite!.prepare(`UPDATE users SET ${assignments} WHERE uid = ?`).run(...values);
+    }
+
+    return this.getUser(uid);
+  }
+
   async listAgents(): Promise<UserProfile[]> {
     const rows = this.pg
       ? (await this.pg.query('SELECT uid, email, display_name AS "displayName", photo_url AS "photoURL", role FROM users WHERE role IN ($1, $2) ORDER BY display_name', ['admin', 'agent'])).rows

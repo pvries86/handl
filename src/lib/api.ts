@@ -74,6 +74,17 @@ export async function listAgents() {
   return request<UserProfile[]>('/api/users/agents');
 }
 
+export async function listUsers() {
+  return request<UserProfile[]>('/api/users');
+}
+
+export async function updateUser(id: string, updates: Partial<Pick<UserProfile, 'displayName' | 'role' | 'photoURL'>>) {
+  return request<UserProfile>(`/api/users/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
+}
+
 export async function listTickets(filter: string, currentUserId?: string, currentUserEmail?: string) {
   const params = new URLSearchParams({ filter });
   if (currentUserId) params.set('currentUserId', currentUserId);

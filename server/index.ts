@@ -34,6 +34,25 @@ const upload = multer({
 app.use(express.json({ limit: '1mb' }));
 app.use('/uploads', express.static(uploadsDir));
 
+async function getRequestUser(req: express.Request) {
+  const uid = String(req.header('x-user-id') || '');
+  return uid ? store.getUser(uid) : null;
+}
+
+async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const user = await getRequestUser(req);
+    if (!user || user.role !== 'admin') {
+      res.status(403).json({ error: 'Admin access required' });
+      return;
+    }
+    res.locals.user = user;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
@@ -60,6 +79,37 @@ app.get('/api/auth/me', async (req, res, next) => {
 app.get('/api/users/agents', async (_req, res, next) => {
   try {
     res.json(await store.listAgents());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/users', requireAdmin, async (_req, res, next) => {
+  try {
+    res.json(await store.listUsers());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/users/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const role = req.body.role;
+    if (role && !['admin', 'agent', 'user'].includes(role)) {
+      res.status(400).json({ error: 'Invalid role' });
+      return;
+    }
+
+    const user = await store.updateUser(req.params.id, {
+      displayName: req.body.displayName,
+      role,
+      photoURL: req.body.photoURL,
+    });
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    res.json(user);
   } catch (error) {
     next(error);
   }
