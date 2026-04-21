@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2, Paperclip, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../AuthContext';
-import { Attachment, TicketPriority } from '../types';
-import { createTicket, uploadFile } from '../lib/api';
+import { Attachment, Requester, TicketPriority } from '../types';
+import { createTicket, importEmailPreview, listRequesters, uploadFile } from '../lib/api';
 import { FileViewer } from './FileViewer';
 import { Button } from '@/components/ui/button';
 import {
@@ -34,13 +34,65 @@ export function CreateTicketDialog() {
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [viewingFile, setViewingFile] = useState<Attachment | null>(null);
+  const [requesters, setRequesters] = useState<Requester[]>([]);
+  const [importedEmailCount, setImportedEmailCount] = useState(0);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
     priority: 'medium' as TicketPriority,
-    requesterName: profile?.displayName || '',
-    requesterEmail: profile?.email || '',
+    requesterName: '',
+    requesterEmail: '',
   });
+
+  const resetForm = () => {
+    setAttachments([]);
+    setViewingFile(null);
+    setImportedEmailCount(0);
+    setFormData({
+      title: '',
+      description: '',
+      priority: 'medium',
+      requesterName: '',
+      requesterEmail: '',
+    });
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    listRequesters()
+      .then((items) => {
+        if (!cancelled) setRequesters(items);
+      })
+      .catch((error) => console.error('Failed to load requesters', error));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const requesterOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return requesters.filter((requester) => {
+      const key = `${requester.requesterName}::${requester.requesterEmail}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [requesters]);
+
+  const applyImportedDraft = (draft: {
+    title: string;
+    description: string;
+    requesterName: string;
+    requesterEmail: string;
+  }) => {
+    setFormData((current) => ({
+      ...current,
+      title: current.title.trim() ? current.title : draft.title,
+      description: current.description.trim() ? current.description : draft.description,
+      requesterName: current.requesterName.trim() ? current.requesterName : draft.requesterName,
+      requesterEmail: current.requesterEmail.trim() ? current.requesterEmail : draft.requesterEmail,
+    }));
+  };
 
   const handleFileUpload = async (files: File[]) => {
     setUploading(true);
@@ -49,6 +101,19 @@ export function CreateTicketDialog() {
 
     try {
       for (const file of files) {
+        if (file.name.toLowerCase().endsWith('.msg')) {
+          const result = await importEmailPreview(file);
+          nextAttachments.push(result.attachment);
+          applyImportedDraft(result.draft);
+          setImportedEmailCount((count) => count + 1);
+          if (result.parseError) {
+            toast.warning(`Imported ${file.name}, but parsing was limited`);
+          } else {
+            toast.success(`Imported ${file.name} into the new ticket`);
+          }
+          continue;
+        }
+
         nextAttachments.push(await uploadFile(file, setUploadProgress));
         toast.success(`Uploaded ${file.name}`);
       }
@@ -73,19 +138,14 @@ export function CreateTicketDialog() {
     try {
       await createTicket({
         ...formData,
+        createdById: profile?.uid,
+        createdByName: profile?.displayName,
         tags: [],
         attachments,
       });
       toast.success('Ticket created successfully');
       setOpen(false);
-      setAttachments([]);
-      setFormData({
-        title: '',
-        description: '',
-        priority: 'medium',
-        requesterName: profile?.displayName || '',
-        requesterEmail: profile?.email || '',
-      });
+      resetForm();
     } catch (error) {
       console.error('Error creating ticket:', error);
       toast.error('Failed to create ticket');
@@ -95,7 +155,13 @@ export function CreateTicketDialog() {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) resetForm();
+      }}
+    >
       <DialogTrigger asChild>
         <Button className="gap-2">
           <Plus className="w-4 h-4" />
@@ -107,7 +173,7 @@ export function CreateTicketDialog() {
           <DialogHeader>
             <DialogTitle>Create New Ticket</DialogTitle>
             <DialogDescription>
-              Fill in the details below to log a new support request or task.
+              Drop in an Outlook email to prefill the ticket, or enter the details manually.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -140,25 +206,62 @@ export function CreateTicketDialog() {
                 </Select>
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="requester">Requester Name</Label>
+                <Label htmlFor="requester">Requester</Label>
                 <Input
                   id="requester"
+                  list="requester-options"
+                  placeholder="Type a name or pick a saved requester"
                   value={formData.requesterName}
-                  onChange={(e) => setFormData({ ...formData, requesterName: e.target.value })}
+                  required
+                  onChange={(e) => {
+                    const requesterName = e.target.value;
+                    const matched = requesterOptions.find((item) => item.requesterName.toLowerCase() === requesterName.toLowerCase());
+                    setFormData({
+                      ...formData,
+                      requesterName,
+                      requesterEmail: matched?.requesterEmail || formData.requesterEmail,
+                    });
+                  }}
                 />
+                <datalist id="requester-options">
+                  {requesterOptions.map((requester) => (
+                    <option
+                      key={`${requester.requesterName}-${requester.requesterEmail}`}
+                      value={requester.requesterName}
+                    >
+                      {requester.requesterEmail}
+                    </option>
+                  ))}
+                </datalist>
               </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="requesterEmail">Requester Email</Label>
+              <Input
+                id="requesterEmail"
+                type="email"
+                placeholder="Optional email address"
+                value={formData.requesterEmail}
+                onChange={(e) => setFormData({ ...formData, requesterEmail: e.target.value })}
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="description">Description</Label>
               <Textarea
                 id="description"
-                placeholder="Provide as much detail as possible..."
+                placeholder="Add the ticket summary, or import an Outlook email to prefill it..."
                 className="min-h-[120px]"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 required
               />
             </div>
+
+            {importedEmailCount > 0 && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-700">
+                Imported email {importedEmailCount === 1 ? 'attached and used to prefill this ticket.' : 'files attached and used to prefill this ticket where fields were still empty.'}
+              </div>
+            )}
 
             {attachments.length > 0 && (
               <div className="space-y-2">
@@ -225,9 +328,28 @@ export function CreateTicketDialog() {
                 <Paperclip className="w-6 h-6 text-slate-400" />
               )}
               <div className="text-center">
-                <p className="text-xs font-medium">Click or drag files here to attach</p>
-                <p className="text-[10px] text-slate-400 mt-1">Supports images, PDFs, and reference files</p>
+                <p className="text-xs font-medium">Drop an Outlook email here to start the ticket</p>
+                <p className="mt-1 text-[10px] text-slate-400">`.msg` files prefill the ticket and stay attached. Other files are added as attachments.</p>
               </div>
+            </div>
+            <div className="flex justify-start">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={uploading}
+                onClick={() => {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = '.msg';
+                  input.onchange = (e) => {
+                    const files = Array.from((e.target as HTMLInputElement).files || []);
+                    if (files.length > 0) handleFileUpload(files);
+                  };
+                  input.click();
+                }}
+              >
+                Import Email (.msg)
+              </Button>
             </div>
           </div>
           <DialogFooter>

@@ -1,4 +1,4 @@
-import { Attachment, Comment, Ticket, UserProfile } from '../types';
+import { Attachment, Comment, Requester, Ticket, UserProfile } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 const TOKEN_KEY = 'taskflow_user_id';
@@ -75,6 +75,10 @@ export async function listAgents() {
   return request<UserProfile[]>('/api/users/agents');
 }
 
+export async function listRequesters() {
+  return request<Requester[]>('/api/requesters');
+}
+
 export async function listUsers() {
   return request<UserProfile[]>('/api/users');
 }
@@ -121,6 +125,19 @@ export async function createComment(ticketId: string, comment: Partial<Comment>)
   }));
 }
 
+export async function updateComment(ticketId: string, commentId: string, comment: Partial<Comment>) {
+  return withTimestamps(await request<Comment>(`/api/tickets/${ticketId}/comments/${commentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(comment),
+  }));
+}
+
+export async function deleteComment(ticketId: string, commentId: string) {
+  return request<void>(`/api/tickets/${ticketId}/comments/${commentId}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function uploadFile(file: File, onProgress?: (progress: number) => void) {
   const form = new FormData();
   form.set('file', file);
@@ -143,4 +160,36 @@ export async function importEmail(ticketId: string, file: File) {
       body: form,
     },
   );
+}
+
+export async function importEmailPreview(file: File) {
+  const form = new FormData();
+  form.set('file', file);
+  return request<{
+    attachment: Attachment;
+    parseError?: string;
+    parsedEmail: {
+      subject?: string | null;
+      from?: string | null;
+      sentAt?: string | null;
+      body?: string | null;
+      parseError?: string | null;
+    };
+    draft: {
+      title: string;
+      description: string;
+      requesterName: string;
+      requesterEmail: string;
+    };
+  }>('/api/email-import-preview', {
+    method: 'POST',
+    body: form,
+  });
+}
+
+export async function deleteAttachment(ticketId: string, attachmentUrl: string) {
+  const params = new URLSearchParams({ url: attachmentUrl });
+  return withTimestamps(await request<Ticket>(`/api/tickets/${ticketId}/attachments?${params.toString()}`, {
+    method: 'DELETE',
+  }));
 }

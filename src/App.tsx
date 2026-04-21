@@ -18,7 +18,6 @@ import {
   AlertCircle,
   CheckCircle2,
   User as UserIcon,
-  Mail,
   Calendar as CalendarIcon,
   ChevronRight,
   History
@@ -135,7 +134,6 @@ export default function App() {
             { id: 'all', label: 'All Open Tickets', icon: TicketIcon },
             { id: 'assigned', label: 'Assigned to Me', icon: UserIcon },
             { id: 'archived', label: 'Archived Tasks', icon: History },
-            { id: 'requesters', label: 'Requesters', icon: Mail },
             ...(profile?.role === 'admin' ? [{ id: 'users', label: 'Users', icon: UserIcon }] : []),
           ].map((item) => (
             <div 

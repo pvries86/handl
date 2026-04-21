@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { nanoid } from 'nanoid';
-import type { Attachment, Comment, Ticket, TicketPriority, UserProfile } from '../src/types';
+import type { Attachment, Comment, Requester, Ticket, TicketPriority, UserProfile } from '../src/types';
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3') as typeof import('better-sqlite3');
@@ -14,6 +14,8 @@ export interface NewTicketInput {
   priority: TicketPriority;
   requesterName: string;
   requesterEmail: string;
+  createdById?: string;
+  createdByName?: string;
   attachments?: unknown[];
 }
 
@@ -29,6 +31,11 @@ export interface NewCommentInput {
   emailSubject?: string;
   emailFrom?: string;
   emailSentAt?: string | null;
+}
+
+export interface UpdateCommentInput {
+  content?: string;
+  isInternal?: boolean;
 }
 
 type SqliteDatabase = import('better-sqlite3').Database;
@@ -101,6 +108,8 @@ export class Store {
           priority TEXT NOT NULL,
           requester_email TEXT NOT NULL,
           requester_name TEXT NOT NULL,
+          created_by_id TEXT,
+          created_by_name TEXT,
           assignee_id TEXT,
           assignee_name TEXT,
           deadline TIMESTAMPTZ,
@@ -153,6 +162,8 @@ export class Store {
         priority TEXT NOT NULL,
         requester_email TEXT NOT NULL,
         requester_name TEXT NOT NULL,
+        created_by_id TEXT,
+        created_by_name TEXT,
         assignee_id TEXT,
         assignee_name TEXT,
         deadline TEXT,
@@ -185,6 +196,8 @@ export class Store {
     this.ensureSqliteColumn('comments', 'email_subject', 'TEXT');
     this.ensureSqliteColumn('comments', 'email_from', 'TEXT');
     this.ensureSqliteColumn('comments', 'email_sent_at', 'TEXT');
+    this.ensureSqliteColumn('tickets', 'created_by_id', 'TEXT');
+    this.ensureSqliteColumn('tickets', 'created_by_name', 'TEXT');
   }
 
   async getOrCreateUser(email: string, displayName?: string): Promise<UserProfile> {
@@ -268,20 +281,68 @@ export class Store {
     return rows as UserProfile[];
   }
 
+  async listRequesters(): Promise<Requester[]> {
+    const rows = this.pg
+      ? (await this.pg.query(
+        `SELECT requester_name AS "requesterName", requester_email AS "requesterEmail"
+         FROM tickets
+         WHERE requester_name <> '' OR requester_email <> ''
+         GROUP BY requester_name, requester_email
+         ORDER BY requester_name, requester_email`,
+      )).rows
+      : this.sqlite!.prepare(
+        `SELECT requester_name AS requesterName, requester_email AS requesterEmail
+         FROM tickets
+         WHERE requester_name <> '' OR requester_email <> ''
+         GROUP BY requester_name, requester_email
+         ORDER BY requester_name, requester_email`,
+      ).all();
+    return rows as Requester[];
+  }
+
   async createTicket(input: NewTicketInput): Promise<Ticket> {
     const id = nanoid(16);
     const timestamp = now();
     if (this.pg) {
       await this.pg.query(
-        `INSERT INTO tickets (id, title, description, status, priority, requester_email, requester_name, created_at, updated_at, tags, attachments)
-         VALUES ($1, $2, $3, 'new', $4, $5, $6, $7, $7, $8, $9)`,
-        [id, input.title, input.description, input.priority, input.requesterEmail, input.requesterName, timestamp, json([]), json(input.attachments)],
+        `INSERT INTO tickets (
+           id, title, description, status, priority, requester_email, requester_name, created_by_id, created_by_name,
+           created_at, updated_at, tags, attachments
+         ) VALUES ($1, $2, $3, 'new', $4, $5, $6, $7, $8, $9, $9, $10, $11)`,
+        [
+          id,
+          input.title,
+          input.description,
+          input.priority,
+          input.requesterEmail,
+          input.requesterName,
+          input.createdById || null,
+          input.createdByName || null,
+          timestamp,
+          json([]),
+          json(input.attachments),
+        ],
       );
     } else {
       this.sqlite!.prepare(
-        `INSERT INTO tickets (id, title, description, status, priority, requester_email, requester_name, created_at, updated_at, tags, attachments)
-         VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(id, input.title, input.description, input.priority, input.requesterEmail, input.requesterName, timestamp, timestamp, json([]), json(input.attachments));
+        `INSERT INTO tickets (
+          id, title, description, status, priority, requester_email, requester_name, created_by_id, created_by_name,
+          created_at, updated_at, tags, attachments
+        ) VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        input.title,
+        input.description,
+        input.priority,
+        input.requesterEmail,
+        input.requesterName,
+        input.createdById || null,
+        input.createdByName || null,
+        timestamp,
+        timestamp,
+        json([]),
+        json(input.attachments),
+      );
     }
     return (await this.getTicket(id))!;
   }
@@ -300,9 +361,9 @@ export class Store {
       params.push(currentUserId);
     } else if (filter === 'archived') {
       conditions.push("status IN ('closed', 'resolved')");
-    } else if (filter === 'requesters' && currentUserEmail) {
-      conditions.push('requester_email = ?');
-      params.push(currentUserEmail);
+    } else if (filter === 'created' && currentUserId) {
+      conditions.push('created_by_id = ?');
+      params.push(currentUserId);
     } else if (['new', 'open', 'in_progress', 'waiting', 'resolved', 'closed'].includes(filter)) {
       conditions.push('status = ?');
       params.push(filter);
@@ -440,6 +501,103 @@ export class Store {
     return comments.find((comment) => comment.id === id);
   }
 
+  async updateComment(ticketId: string, commentId: string, updates: UpdateCommentInput): Promise<Comment | undefined> {
+    const entries = Object.entries(updates).filter(([, value]) => value !== undefined);
+    if (entries.length === 0) {
+      const comments = await this.listComments(ticketId);
+      return comments.find((comment) => comment.id === commentId);
+    }
+
+    if (this.pg) {
+      const values: unknown[] = [];
+      const assignments: string[] = [];
+      let index = 1;
+
+      if (updates.content !== undefined) {
+        assignments.push(`content = $${index++}`);
+        values.push(updates.content);
+      }
+      if (updates.isInternal !== undefined) {
+        assignments.push(`is_internal = $${index++}`);
+        values.push(updates.isInternal);
+      }
+
+      values.push(commentId, ticketId);
+      await this.pg.query(
+        `UPDATE comments SET ${assignments.join(', ')} WHERE id = $${index++} AND ticket_id = $${index}`,
+        values,
+      );
+    } else {
+      const assignments: string[] = [];
+      const values: unknown[] = [];
+
+      if (updates.content !== undefined) {
+        assignments.push('content = ?');
+        values.push(updates.content);
+      }
+      if (updates.isInternal !== undefined) {
+        assignments.push('is_internal = ?');
+        values.push(updates.isInternal ? 1 : 0);
+      }
+
+      values.push(commentId, ticketId);
+      this.sqlite!.prepare(
+        `UPDATE comments SET ${assignments.join(', ')} WHERE id = ? AND ticket_id = ?`,
+      ).run(...values);
+    }
+
+    const comments = await this.listComments(ticketId);
+    return comments.find((comment) => comment.id === commentId);
+  }
+
+  async deleteComment(ticketId: string, commentId: string): Promise<boolean> {
+    let changes = 0;
+    if (this.pg) {
+      const result = await this.pg.query('DELETE FROM comments WHERE id = $1 AND ticket_id = $2', [commentId, ticketId]);
+      changes = result.rowCount ?? 0;
+    } else {
+      const result = this.sqlite!.prepare('DELETE FROM comments WHERE id = ? AND ticket_id = ?').run(commentId, ticketId);
+      changes = result.changes;
+    }
+    return changes > 0;
+  }
+
+  async deleteAttachment(ticketId: string, attachmentUrl: string) {
+    const ticket = await this.getTicket(ticketId);
+    if (!ticket) return null;
+
+    const nextTicketAttachments = (ticket.attachments || []).filter((attachment) => attachment.url !== attachmentUrl);
+    await this.updateTicket(ticketId, { attachments: nextTicketAttachments });
+
+    if (this.pg) {
+      const comments = await this.listComments(ticketId);
+      for (const comment of comments) {
+        const attachments = (comment.attachments || []).filter((attachment) => attachment.url !== attachmentUrl);
+        if (attachments.length !== (comment.attachments || []).length) {
+          await this.pg.query('UPDATE comments SET attachments = $1::jsonb WHERE id = $2 AND ticket_id = $3', [
+            json(attachments),
+            comment.id,
+            ticketId,
+          ]);
+        }
+      }
+    } else {
+      const comments = await this.listComments(ticketId);
+      for (const comment of comments) {
+        const attachments = (comment.attachments || []).filter((attachment) => attachment.url !== attachmentUrl);
+        if (attachments.length !== (comment.attachments || []).length) {
+          this.sqlite!.prepare('UPDATE comments SET attachments = ? WHERE id = ? AND ticket_id = ?').run(
+            json(attachments),
+            comment.id,
+            ticketId,
+          );
+        }
+      }
+    }
+
+    return this.getTicket(ticketId);
+  }
+
   async importEmailToTicket(ticketId: string, author: Pick<UserProfile, 'uid' | 'displayName'>, attachment: Attachment, email: {
     subject?: string | null;
     from?: string | null;
@@ -491,6 +649,8 @@ export class Store {
     const select = `SELECT id, title, description, status, priority,
       requester_email AS ${this.pg ? '"requesterEmail"' : 'requesterEmail'},
       requester_name AS ${this.pg ? '"requesterName"' : 'requesterName'},
+      created_by_id AS ${this.pg ? '"createdById"' : 'createdById'},
+      created_by_name AS ${this.pg ? '"createdByName"' : 'createdByName'},
       assignee_id AS ${this.pg ? '"assigneeId"' : 'assigneeId'},
       assignee_name AS ${this.pg ? '"assigneeName"' : 'assigneeName'},
       deadline,

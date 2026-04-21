@@ -17,6 +17,8 @@ export interface Ticket {
   priority: TicketPriority;
   requesterEmail: string;
   requesterName: string;
+  createdById?: string;
+  createdByName?: string;
   assigneeId?: string;
   assigneeName?: string;
   deadline?: any;
@@ -24,6 +26,11 @@ export interface Ticket {
   updatedAt: any;
   tags: string[];
   attachments?: Attachment[];
+}
+
+export interface Requester {
+  requesterName: string;
+  requesterEmail: string;
 }
 
 export interface Comment {
