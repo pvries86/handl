@@ -72,7 +72,7 @@ export function CreateTicketDialog() {
   const requesterOptions = useMemo(() => {
     const seen = new Set<string>();
     return requesters.filter((requester) => {
-      const key = `${requester.requesterName}::${requester.requesterEmail}`;
+      const key = requester.requesterName.trim().toLowerCase();
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -90,7 +90,7 @@ export function CreateTicketDialog() {
       title: current.title.trim() ? current.title : draft.title,
       description: current.description.trim() ? current.description : draft.description,
       requesterName: current.requesterName.trim() ? current.requesterName : draft.requesterName,
-      requesterEmail: current.requesterEmail.trim() ? current.requesterEmail : draft.requesterEmail,
+      requesterEmail: current.requesterEmail,
     }));
   };
 
@@ -138,10 +138,20 @@ export function CreateTicketDialog() {
     try {
       await createTicket({
         ...formData,
+        requesterEmail: '',
         createdById: profile?.uid,
         createdByName: profile?.displayName,
         tags: [],
         attachments,
+      });
+      setRequesters((current) => {
+        const name = formData.requesterName.trim();
+        if (!name || current.some((item) => item.requesterName.toLowerCase() === name.toLowerCase())) {
+          return current;
+        }
+        return [...current, { requesterName: name, requesterEmail: '' }].sort((a, b) =>
+          a.requesterName.localeCompare(b.requesterName),
+        );
       });
       toast.success('Ticket created successfully');
       setOpen(false);
@@ -219,31 +229,19 @@ export function CreateTicketDialog() {
                     setFormData({
                       ...formData,
                       requesterName,
-                      requesterEmail: matched?.requesterEmail || formData.requesterEmail,
+                      requesterEmail: matched ? '' : formData.requesterEmail,
                     });
                   }}
                 />
                 <datalist id="requester-options">
                   {requesterOptions.map((requester) => (
                     <option
-                      key={`${requester.requesterName}-${requester.requesterEmail}`}
+                      key={requester.requesterName}
                       value={requester.requesterName}
-                    >
-                      {requester.requesterEmail}
-                    </option>
+                    />
                   ))}
                 </datalist>
               </div>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="requesterEmail">Requester Email</Label>
-              <Input
-                id="requesterEmail"
-                type="email"
-                placeholder="Optional email address"
-                value={formData.requesterEmail}
-                onChange={(e) => setFormData({ ...formData, requesterEmail: e.target.value })}
-              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="description">Description</Label>

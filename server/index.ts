@@ -298,9 +298,14 @@ app.get('/api/tickets/:id/comments', async (req, res, next) => {
   }
 });
 
-app.post('/api/tickets/:id/comments', async (req, res, next) => {
+app.post('/api/tickets/:id/comments', requireUser, async (req, res, next) => {
   try {
-    const comment = await store.createComment({ ...req.body, ticketId: req.params.id });
+    const comment = await store.createComment({
+      ...req.body,
+      ticketId: req.params.id,
+      authorId: res.locals.user.uid,
+      authorName: res.locals.user.displayName,
+    });
     res.status(201).json(comment);
   } catch (error) {
     next(error);

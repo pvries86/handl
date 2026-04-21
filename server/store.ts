@@ -13,7 +13,7 @@ export interface NewTicketInput {
   description: string;
   priority: TicketPriority;
   requesterName: string;
-  requesterEmail: string;
+  requesterEmail?: string;
   createdById?: string;
   createdByName?: string;
   attachments?: unknown[];
@@ -284,18 +284,18 @@ export class Store {
   async listRequesters(): Promise<Requester[]> {
     const rows = this.pg
       ? (await this.pg.query(
-        `SELECT requester_name AS "requesterName", requester_email AS "requesterEmail"
+        `SELECT requester_name AS "requesterName", '' AS "requesterEmail"
          FROM tickets
-         WHERE requester_name <> '' OR requester_email <> ''
-         GROUP BY requester_name, requester_email
-         ORDER BY requester_name, requester_email`,
+         WHERE requester_name <> ''
+         GROUP BY requester_name
+         ORDER BY requester_name`,
       )).rows
       : this.sqlite!.prepare(
-        `SELECT requester_name AS requesterName, requester_email AS requesterEmail
+        `SELECT requester_name AS requesterName, '' AS requesterEmail
          FROM tickets
-         WHERE requester_name <> '' OR requester_email <> ''
-         GROUP BY requester_name, requester_email
-         ORDER BY requester_name, requester_email`,
+         WHERE requester_name <> ''
+         GROUP BY requester_name
+         ORDER BY requester_name`,
       ).all();
     return rows as Requester[];
   }
@@ -314,7 +314,7 @@ export class Store {
           input.title,
           input.description,
           input.priority,
-          input.requesterEmail,
+          input.requesterEmail || '',
           input.requesterName,
           input.createdById || null,
           input.createdByName || null,
@@ -334,7 +334,7 @@ export class Store {
         input.title,
         input.description,
         input.priority,
-        input.requesterEmail,
+        input.requesterEmail || '',
         input.requesterName,
         input.createdById || null,
         input.createdByName || null,

@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { ChevronDown, ChevronRight, Loader2, Paperclip, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAuth } from '../AuthContext';
 import { useAgents } from '../hooks/useAgents';
 import { Attachment, Comment, Ticket, TicketPriority, TicketStatus } from '../types';
 import {
@@ -33,13 +32,24 @@ interface TicketDetailsProps {
   onClose: () => void;
 }
 
+function toDateTimeInputValue(value?: { toDate?: () => Date } | null) {
+  if (!value?.toDate) return '';
+  const date = value.toDate();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 export function TicketDetailsDialog({ ticket }: TicketDetailsProps) {
-  const { profile } = useAuth();
   const { agents } = useAgents();
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentOrder, setCommentOrder] = useState<'desc' | 'asc'>('desc');
   const [newComment, setNewComment] = useState('');
-  const [isInternal, setIsInternal] = useState(false);
+  const [deadlineValue, setDeadlineValue] = useState('');
+  const [savingDeadline, setSavingDeadline] = useState(false);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
@@ -82,6 +92,38 @@ export function TicketDetailsDialog({ ticket }: TicketDetailsProps) {
     });
     return items;
   }, [commentOrder, comments]);
+  const assigneeOptions = useMemo(() => {
+    const items = [...agents];
+    if (
+      ticket.assigneeId &&
+      ticket.assigneeName &&
+      !items.some((agent) => agent.uid === ticket.assigneeId)
+    ) {
+      items.push({
+        uid: ticket.assigneeId,
+        email: '',
+        displayName: ticket.assigneeName,
+        photoURL: '',
+        role: 'user',
+      });
+    }
+    return items;
+  }, [agents, ticket.assigneeId, ticket.assigneeName]);
+  const selectedAssigneeLabel = useMemo(() => {
+    if (!ticket.assigneeId) return 'Unassigned';
+    return (
+      assigneeOptions.find((agent) => agent.uid === ticket.assigneeId)?.displayName ||
+      ticket.assigneeName ||
+      'Assigned'
+    );
+  }, [assigneeOptions, ticket.assigneeId, ticket.assigneeName]);
+  const savedDeadlineValue = useMemo(() => toDateTimeInputValue(ticket.deadline), [ticket.deadline]);
+  const deadlineChanged = deadlineValue !== savedDeadlineValue;
+  const hasDeadline = Boolean(ticket.deadline?.toDate);
+
+  useEffect(() => {
+    setDeadlineValue(savedDeadlineValue);
+  }, [savedDeadlineValue]);
 
   const isLongComment = (comment: Comment) => {
     const text = comment.content || '';
@@ -157,6 +199,33 @@ export function TicketDetailsDialog({ ticket }: TicketDetailsProps) {
     }
   };
 
+  const handleDeadlineSave = async () => {
+    setSavingDeadline(true);
+    try {
+      await updateTicket(ticket.id, {
+        deadline: deadlineValue ? new Date(deadlineValue).toISOString() : undefined,
+      });
+      toast.success(deadlineValue ? 'Deadline updated' : 'Deadline cleared');
+    } catch {
+      toast.error('Failed to update deadline');
+    } finally {
+      setSavingDeadline(false);
+    }
+  };
+
+  const handleDeadlineClear = async () => {
+    setSavingDeadline(true);
+    try {
+      setDeadlineValue('');
+      await updateTicket(ticket.id, { deadline: null as any });
+      toast.success('Deadline cleared');
+    } catch {
+      toast.error('Failed to clear deadline');
+    } finally {
+      setSavingDeadline(false);
+    }
+  };
+
   const handleFileUpload = async (files: File[]) => {
     setUploading(true);
     setUploadProgress(0);
@@ -196,24 +265,25 @@ export function TicketDetailsDialog({ ticket }: TicketDetailsProps) {
     try {
       await createComment(ticket.id, {
         ticketId: ticket.id,
-        authorId: profile?.uid,
-        authorName: profile?.displayName,
         content: newComment,
-        isInternal,
+        isInternal: false,
         attachments: newAttachments,
         sourceType: 'manual',
       });
 
-      await updateTicket(ticket.id, {
-        attachments: [...(ticket.attachments || []), ...newAttachments],
-      });
+      if (newAttachments.length > 0) {
+        await updateTicket(ticket.id, {
+          attachments: [...(ticket.attachments || []), ...newAttachments],
+        });
+      }
 
       setNewComment('');
       setNewAttachments([]);
       await refreshComments();
       toast.success('Update saved');
-    } catch {
-      toast.error('Failed to add update');
+    } catch (error: any) {
+      console.error('Failed to add update', error);
+      toast.error(error?.message || 'Failed to add update');
     } finally {
       setLoading(false);
     }
@@ -303,19 +373,45 @@ export function TicketDetailsDialog({ ticket }: TicketDetailsProps) {
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-white">
-      <div className="p-8 border-b border-border-theme flex justify-between items-start shrink-0">
+      <div className="p-8 border-b border-border-theme flex justify-between items-start gap-6 shrink-0">
         <div>
           <div className="text-sm font-medium text-text-light uppercase tracking-wider mb-1">
             TICKET #{ticket.id.slice(0, 8).toUpperCase()}
           </div>
           <h1 className="text-2xl font-bold text-text-dark leading-tight">{ticket.title}</h1>
         </div>
-        <Badge variant="outline" className={`status-pill px-3 py-1 text-xs ${
-          ticket.priority === 'critical' || ticket.priority === 'high' ? 'status-urgent' :
-          ticket.status === 'new' ? 'status-new' : 'status-active'
-        }`}>
-          {ticket.status.replace('_', ' ')}
-        </Badge>
+        <div className="flex items-start gap-3">
+          <div className="min-w-[160px]">
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-widest text-text-light">Status</div>
+            <Select value={ticket.status} onValueChange={handleStatusChange}>
+              <SelectTrigger className="h-9 text-xs w-40 bg-white">
+                <SelectValue placeholder="Change Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="new">New</SelectItem>
+                <SelectItem value="open">Open</SelectItem>
+                <SelectItem value="in_progress">In Progress</SelectItem>
+                <SelectItem value="waiting">Waiting</SelectItem>
+                <SelectItem value="resolved">Resolved</SelectItem>
+                <SelectItem value="closed">Closed</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Button
+            type="submit"
+            form="ticket-update-form"
+            className="mt-[18px] bg-primary px-6 font-bold text-white hover:bg-primary/90"
+            disabled={loading || uploading || (!newComment.trim() && newAttachments.length === 0)}
+          >
+            {loading ? 'Saving...' : 'Save Update'}
+          </Button>
+          <Badge variant="outline" className={`status-pill px-3 py-1 text-xs ${
+            ticket.priority === 'critical' || ticket.priority === 'high' ? 'status-urgent' :
+            ticket.status === 'new' ? 'status-new' : 'status-active'
+          }`}>
+            {ticket.status.replace('_', ' ')}
+          </Badge>
+        </div>
       </div>
 
       <ScrollArea className="flex-1 min-h-0">
@@ -323,23 +419,66 @@ export function TicketDetailsDialog({ ticket }: TicketDetailsProps) {
           <div className="grid grid-cols-2 gap-6 p-6 bg-[#f8fafc] rounded-xl border border-border-theme">
             <div>
               <div className="text-[10px] font-bold uppercase tracking-widest text-text-light mb-1">Requestor</div>
-              <div className="text-sm font-semibold">{ticket.requesterName} ({ticket.requesterEmail})</div>
+              <div className="text-sm font-semibold">{ticket.requesterName || 'No requester set'}</div>
             </div>
             <div>
               <div className="text-[10px] font-bold uppercase tracking-widest text-text-light mb-1">Deadline</div>
-              <div className="text-sm font-semibold">
-                {ticket.deadline ? format(ticket.deadline.toDate(), 'MMM d, yyyy HH:mm') : 'No deadline set'}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-text-dark">
+                      {hasDeadline ? format(ticket.deadline.toDate(), 'MMM d, yyyy HH:mm') : 'No deadline set'}
+                    </div>
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={`shrink-0 ${hasDeadline ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-slate-200 bg-slate-50 text-slate-500'}`}
+                  >
+                    {hasDeadline ? 'Scheduled' : 'Open Ended'}
+                  </Badge>
+                </div>
+                <input
+                  type="datetime-local"
+                  value={deadlineValue}
+                  onChange={(e) => setDeadlineValue(e.target.value)}
+                  className="h-8 w-full rounded-md border border-border-theme bg-white px-2 text-xs outline-none transition-colors focus:border-primary"
+                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-[11px]"
+                    onClick={handleDeadlineSave}
+                    disabled={savingDeadline || !deadlineChanged}
+                  >
+                    {savingDeadline ? 'Saving...' : 'Save'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={handleDeadlineClear}
+                    disabled={savingDeadline || (!hasDeadline && !deadlineValue)}
+                  >
+                    Clear
+                  </Button>
+                  {deadlineChanged && (
+                    <span className="text-[11px] text-text-light">Unsaved changes</span>
+                  )}
+                </div>
               </div>
             </div>
             <div>
               <div className="text-[10px] font-bold uppercase tracking-widest text-text-light mb-1">Assigned To</div>
               <Select value={ticket.assigneeId || 'unassigned'} onValueChange={handleAssigneeChange}>
                 <SelectTrigger className="h-7 text-xs w-48 bg-white">
-                  <SelectValue placeholder="Unassigned" />
+                  <span className="truncate">{selectedAssigneeLabel}</span>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="unassigned">Unassigned</SelectItem>
-                  {agents.map((agent) => (
+                  {assigneeOptions.map((agent) => (
                     <SelectItem key={agent.uid} value={agent.uid}>{agent.displayName}</SelectItem>
                   ))}
                 </SelectContent>
@@ -390,7 +529,7 @@ export function TicketDetailsDialog({ ticket }: TicketDetailsProps) {
                 const canEdit = comment.sourceType !== 'email_import';
 
                 return (
-                  <div key={comment.id} className={`relative ${comment.isInternal ? 'bg-amber-50/50 p-3 rounded-lg border border-amber-100' : 'p-3 rounded-lg border border-transparent hover:border-border-theme/70'}`}>
+                  <div key={comment.id} className="relative rounded-lg border border-transparent p-3 hover:border-border-theme/70">
                     <div className="absolute -left-[31px] top-4 w-2 h-2 rounded-full bg-border-theme border-4 border-white" />
 
                     <div className="flex items-start justify-between gap-3">
@@ -408,11 +547,6 @@ export function TicketDetailsDialog({ ticket }: TicketDetailsProps) {
                           {comment.sourceType === 'email_import' && (
                             <Badge variant="outline" className="text-[8px] h-4 uppercase tracking-tighter bg-blue-50 text-blue-700 border-blue-200">
                               Imported Email
-                            </Badge>
-                          )}
-                          {comment.isInternal && (
-                            <Badge variant="outline" className="text-[8px] h-4 uppercase tracking-tighter bg-amber-100 text-amber-700 border-amber-200">
-                              Internal Note
                             </Badge>
                           )}
                         </div>
@@ -495,7 +629,7 @@ export function TicketDetailsDialog({ ticket }: TicketDetailsProps) {
 
           <section className="space-y-4 pt-4">
             <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Add Update</div>
-            <form onSubmit={handleAddComment} className="space-y-4">
+            <form id="ticket-update-form" onSubmit={handleAddComment} className="space-y-4">
               <Textarea
                 placeholder="Add a private note or response to requestor..."
                 className="min-h-[120px] bg-white border-border-theme rounded-xl p-4 text-sm focus-visible:ring-primary"
@@ -570,34 +704,8 @@ export function TicketDetailsDialog({ ticket }: TicketDetailsProps) {
               </div>
 
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  {profile?.role !== 'user' && (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        id="internal-note"
-                        checked={isInternal}
-                        onChange={(e) => setIsInternal(e.target.checked)}
-                        className="w-4 h-4 rounded border-border-theme text-primary focus:ring-primary"
-                      />
-                      <label htmlFor="internal-note" className="text-xs text-text-light cursor-pointer">Internal note</label>
-                    </div>
-                  )}
-                  <Select value={ticket.status} onValueChange={handleStatusChange}>
-                    <SelectTrigger className="h-9 text-xs w-40 bg-white">
-                      <SelectValue placeholder="Change Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="new">New</SelectItem>
-                      <SelectItem value="open">Open</SelectItem>
-                      <SelectItem value="in_progress">In Progress</SelectItem>
-                      <SelectItem value="waiting">Waiting</SelectItem>
-                      <SelectItem value="resolved">Resolved</SelectItem>
-                      <SelectItem value="closed">Closed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button className="bg-primary hover:bg-primary/90 text-white font-bold px-8" disabled={loading || uploading || (!newComment.trim() && newAttachments.length === 0)}>
+                <div />
+                <Button type="submit" className="bg-primary hover:bg-primary/90 text-white font-bold px-8" disabled={loading || uploading || (!newComment.trim() && newAttachments.length === 0)}>
                   Save Update
                 </Button>
               </div>
