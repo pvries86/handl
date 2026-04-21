@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import MsgReader from '@kenjiuno/msgreader';
@@ -14,6 +15,7 @@ const dataDir = process.env.DATA_DIR || path.join(rootDir, 'data');
 const uploadsDir = path.join(dataDir, 'uploads');
 const distDir = path.join(rootDir, 'dist');
 const port = Number(process.env.PORT || 3000);
+const pythonBin = process.env.PYTHON_BIN || 'python';
 
 fs.mkdirSync(uploadsDir, { recursive: true });
 
@@ -84,14 +86,58 @@ function normalizeEmailBody(body: unknown) {
   return body.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function parseMsgFile(buffer: Buffer) {
+function parseMsgFileJs(buffer: Buffer) {
   const parsed = new MsgReader(buffer).getFileData();
+  if ((parsed as any).error) {
+    throw new Error(String((parsed as any).error));
+  }
   return {
     subject: parsed.subject || null,
     from: parsed.senderEmail || parsed.senderName || null,
     sentAt: parsed.messageDeliveryTime || parsed.clientSubmitTime || parsed.creationTime || null,
     body: normalizeEmailBody(parsed.body),
   };
+}
+
+function parseMsgFilePython(filePath: string) {
+  const scriptPath = path.join(rootDir, 'server', 'msg_parser.py');
+  const result = spawnSync(pythonBin, [scriptPath, filePath], {
+    encoding: 'utf-8',
+    timeout: 30000,
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(result.stderr?.trim() || result.stdout?.trim() || `Python parser failed with exit code ${result.status}`);
+  }
+
+  const payload = JSON.parse(result.stdout);
+  return {
+    subject: payload.subject || null,
+    from: payload.from || null,
+    sentAt: payload.sentAt || null,
+    body: normalizeEmailBody(payload.body),
+  };
+}
+
+function parseMsgFile(filePath: string) {
+  const errors: string[] = [];
+
+  try {
+    return parseMsgFilePython(filePath);
+  } catch (error) {
+    errors.push(`python: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  try {
+    return parseMsgFileJs(fs.readFileSync(filePath));
+  } catch (error) {
+    errors.push(`js: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  throw new Error(errors.join(' | '));
 }
 
 app.get('/api/health', (_req, res) => {
@@ -223,8 +269,9 @@ app.post('/api/tickets/:id/import-email', requireUser, upload.single('file'), as
     let parsedEmail: { subject?: string | null; from?: string | null; sentAt?: string | null; body?: string | null; parseError?: string | null };
 
     try {
-      parsedEmail = parseMsgFile(fs.readFileSync(req.file.path));
+      parsedEmail = parseMsgFile(req.file.path);
     } catch (error) {
+      console.error('MSG parse failed:', error);
       parsedEmail = {
         body: '',
         parseError: error instanceof Error ? error.message : 'Unable to parse Outlook email',

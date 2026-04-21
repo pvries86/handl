@@ -78,6 +78,7 @@ The host does not need the source code when using `compose.stack.yml`; it only p
 
 ```bash
 npm install
+python -m pip install extract-msg beautifulsoup4
 npm run build
 npm start
 ```
