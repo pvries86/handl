@@ -497,6 +497,8 @@ export class Store {
       );
     }
 
+    await this.touchTicket(input.ticketId, timestamp);
+
     const comments = await this.listComments(input.ticketId);
     return comments.find((comment) => comment.id === id);
   }
@@ -507,6 +509,7 @@ export class Store {
       const comments = await this.listComments(ticketId);
       return comments.find((comment) => comment.id === commentId);
     }
+    const timestamp = now();
 
     if (this.pg) {
       const values: unknown[] = [];
@@ -546,18 +549,24 @@ export class Store {
       ).run(...values);
     }
 
+    await this.touchTicket(ticketId, timestamp);
+
     const comments = await this.listComments(ticketId);
     return comments.find((comment) => comment.id === commentId);
   }
 
   async deleteComment(ticketId: string, commentId: string): Promise<boolean> {
     let changes = 0;
+    const timestamp = now();
     if (this.pg) {
       const result = await this.pg.query('DELETE FROM comments WHERE id = $1 AND ticket_id = $2', [commentId, ticketId]);
       changes = result.rowCount ?? 0;
     } else {
       const result = this.sqlite!.prepare('DELETE FROM comments WHERE id = ? AND ticket_id = ?').run(commentId, ticketId);
       changes = result.changes;
+    }
+    if (changes > 0) {
+      await this.touchTicket(ticketId, timestamp);
     }
     return changes > 0;
   }
@@ -668,6 +677,32 @@ export class Store {
     };
   }
 
+  async isAttachmentReferenced(attachmentUrl: string): Promise<boolean> {
+    if (this.pg) {
+      const ticketMatch = await this.pg.query(
+        `SELECT 1 FROM tickets WHERE attachments::text LIKE $1 LIMIT 1`,
+        [`%${attachmentUrl}%`],
+      );
+      if ((ticketMatch.rowCount ?? 0) > 0) return true;
+
+      const commentMatch = await this.pg.query(
+        `SELECT 1 FROM comments WHERE attachments::text LIKE $1 LIMIT 1`,
+        [`%${attachmentUrl}%`],
+      );
+      return (commentMatch.rowCount ?? 0) > 0;
+    }
+
+    const ticketMatch = this.sqlite!
+      .prepare(`SELECT 1 FROM tickets WHERE attachments LIKE ? LIMIT 1`)
+      .get(`%${attachmentUrl}%`);
+    if (ticketMatch) return true;
+
+    const commentMatch = this.sqlite!
+      .prepare(`SELECT 1 FROM comments WHERE attachments LIKE ? LIMIT 1`)
+      .get(`%${attachmentUrl}%`);
+    return Boolean(commentMatch);
+  }
+
   private async getUserByEmail(email: string): Promise<UserProfile | null> {
     const row = this.pg
       ? (await this.pg.query('SELECT uid, email, display_name AS "displayName", photo_url AS "photoURL", role FROM users WHERE email = $1', [email])).rows[0]
@@ -713,5 +748,14 @@ export class Store {
     if (!columns.some((entry) => entry.name === column)) {
       this.sqlite!.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }
+  }
+
+  private async touchTicket(ticketId: string, timestamp = now()) {
+    if (this.pg) {
+      await this.pg.query('UPDATE tickets SET updated_at = $1 WHERE id = $2', [timestamp, ticketId]);
+      return;
+    }
+
+    this.sqlite!.prepare('UPDATE tickets SET updated_at = ? WHERE id = ?').run(timestamp, ticketId);
   }
 }

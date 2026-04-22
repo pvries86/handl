@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Ticket } from '../types';
-import { listTickets } from '../lib/api';
+import { listTickets, TICKETS_CHANGED_EVENT } from '../lib/api';
 
 export function useTickets(filter: string = 'all', currentUserId?: string, currentUserEmail?: string, searchQuery?: string) {
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -8,29 +8,35 @@ export function useTickets(filter: string = 'all', currentUserId?: string, curre
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-
-    listTickets(filter, currentUserId, currentUserEmail, searchQuery)
-      .then((ticketData) => {
+    const loadTickets = async (showLoadingState = false) => {
+      if (showLoadingState) setLoading(true);
+      try {
+        const ticketData = await listTickets(filter, currentUserId, currentUserEmail, searchQuery);
         if (!cancelled) setTickets(ticketData);
-      })
-      .catch((error) => {
+      } catch (error) {
         console.error('Failed to load tickets', error);
         if (!cancelled) setTickets([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      } finally {
+        if (!cancelled && showLoadingState) setLoading(false);
+      }
+    };
+
+    void loadTickets(true);
 
     const interval = window.setInterval(() => {
-      listTickets(filter, currentUserId, currentUserEmail, searchQuery)
-        .then((ticketData) => !cancelled && setTickets(ticketData))
-        .catch((error) => console.error('Failed to refresh tickets', error));
+      void loadTickets(false);
     }, 5000);
+
+    const handleTicketsChanged = () => {
+      void loadTickets(false);
+    };
+
+    window.addEventListener(TICKETS_CHANGED_EVENT, handleTicketsChanged);
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      window.removeEventListener(TICKETS_CHANGED_EVENT, handleTicketsChanged);
     };
   }, [filter, currentUserId, currentUserEmail, searchQuery]);
 

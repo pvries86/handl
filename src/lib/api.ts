@@ -2,6 +2,7 @@ import { Attachment, Comment, Requester, Ticket, UserProfile } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 const TOKEN_KEY = 'taskflow_user_id';
+export const TICKETS_CHANGED_EVENT = 'taskflow:tickets-changed';
 
 export interface LocalUser {
   uid: string;
@@ -50,6 +51,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     return undefined as T;
   }
   return response.json();
+}
+
+function notifyTicketsChanged() {
+  window.dispatchEvent(new Event(TICKETS_CHANGED_EVENT));
 }
 
 export function getStoredUserId() {
@@ -103,23 +108,29 @@ export async function listTickets(filter: string, currentUserId?: string, curren
 }
 
 export async function createTicket(ticket: Partial<Ticket>) {
-  return withTimestamps(await request<Ticket>('/api/tickets', {
+  const createdTicket = withTimestamps(await request<Ticket>('/api/tickets', {
     method: 'POST',
     body: JSON.stringify(ticket),
   }));
+  notifyTicketsChanged();
+  return createdTicket;
 }
 
 export async function updateTicket(id: string, updates: Partial<Ticket>) {
-  return withTimestamps(await request<Ticket>(`/api/tickets/${id}`, {
+  const updatedTicket = withTimestamps(await request<Ticket>(`/api/tickets/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
   }));
+  notifyTicketsChanged();
+  return updatedTicket;
 }
 
 export async function deleteTicket(id: string) {
-  return request<void>(`/api/tickets/${id}`, {
+  const result = await request<void>(`/api/tickets/${id}`, {
     method: 'DELETE',
   });
+  notifyTicketsChanged();
+  return result;
 }
 
 export async function listComments(ticketId: string) {
@@ -128,23 +139,29 @@ export async function listComments(ticketId: string) {
 }
 
 export async function createComment(ticketId: string, comment: Partial<Comment>) {
-  return withTimestamps(await request<Comment>(`/api/tickets/${ticketId}/comments`, {
+  const createdComment = withTimestamps(await request<Comment>(`/api/tickets/${ticketId}/comments`, {
     method: 'POST',
     body: JSON.stringify(comment),
   }));
+  notifyTicketsChanged();
+  return createdComment;
 }
 
 export async function updateComment(ticketId: string, commentId: string, comment: Partial<Comment>) {
-  return withTimestamps(await request<Comment>(`/api/tickets/${ticketId}/comments/${commentId}`, {
+  const updatedComment = withTimestamps(await request<Comment>(`/api/tickets/${ticketId}/comments/${commentId}`, {
     method: 'PATCH',
     body: JSON.stringify(comment),
   }));
+  notifyTicketsChanged();
+  return updatedComment;
 }
 
 export async function deleteComment(ticketId: string, commentId: string) {
-  return request<void>(`/api/tickets/${ticketId}/comments/${commentId}`, {
+  const result = await request<void>(`/api/tickets/${ticketId}/comments/${commentId}`, {
     method: 'DELETE',
   });
+  notifyTicketsChanged();
+  return result;
 }
 
 export async function uploadFile(file: File, onProgress?: (progress: number) => void) {
@@ -159,23 +176,35 @@ export async function uploadFile(file: File, onProgress?: (progress: number) => 
   return withTimestamps(attachment);
 }
 
+export async function deleteUploadedFile(attachmentUrl: string) {
+  const params = new URLSearchParams({ url: attachmentUrl });
+  return request<void>(`/api/uploads?${params.toString()}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function importEmail(ticketId: string, file: File) {
   const form = new FormData();
   form.set('file', file);
-  return request<{ ticket: Ticket; comment: Comment | null; attachment: Attachment; parseError?: string }>(
+  const result = await request<{ ticket: Ticket; comment: Comment | null; attachment: Attachment; parseError?: string }>(
     `/api/tickets/${ticketId}/import-email`,
     {
       method: 'POST',
       body: form,
     },
   );
+  notifyTicketsChanged();
+  return result;
 }
 
-export async function importEmailPreview(file: File) {
+export async function importEmailPreview(file: File, options?: { persistUpload?: boolean }) {
   const form = new FormData();
   form.set('file', file);
+  if (options?.persistUpload) {
+    form.set('persistUpload', 'true');
+  }
   return request<{
-    attachment: Attachment;
+    attachment?: Attachment;
     parseError?: string;
     parsedEmail: {
       subject?: string | null;
@@ -198,7 +227,9 @@ export async function importEmailPreview(file: File) {
 
 export async function deleteAttachment(ticketId: string, attachmentUrl: string) {
   const params = new URLSearchParams({ url: attachmentUrl });
-  return withTimestamps(await request<Ticket>(`/api/tickets/${ticketId}/attachments?${params.toString()}`, {
+  const ticket = withTimestamps(await request<Ticket>(`/api/tickets/${ticketId}/attachments?${params.toString()}`, {
     method: 'DELETE',
   }));
+  notifyTicketsChanged();
+  return ticket;
 }

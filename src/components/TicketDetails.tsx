@@ -34,6 +34,156 @@ interface TicketDetailsProps {
   onTicketDeleted?: (ticketId: string) => void;
 }
 
+const TEXT_FILE_EXTENSIONS = new Set([
+  'txt',
+  'log',
+  'md',
+  'csv',
+  'tsv',
+  'json',
+  'jsonl',
+  'xml',
+  'yaml',
+  'yml',
+  'ini',
+  'cfg',
+  'conf',
+  'env',
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
+  'css',
+  'scss',
+  'html',
+  'htm',
+  'sql',
+  'py',
+  'ps1',
+  'sh',
+  'bat',
+  'cmd',
+]);
+
+function getFileExtension(name: string) {
+  const parts = name.toLowerCase().split('.');
+  return parts.length > 1 ? parts.pop() || '' : '';
+}
+
+function isTextPreviewable(file: Attachment) {
+  const type = file.type.toLowerCase();
+  if (
+    type.startsWith('text/') ||
+    type.includes('json') ||
+    type.includes('xml') ||
+    type.includes('javascript') ||
+    type.includes('typescript') ||
+    type.includes('csv')
+  ) {
+    return true;
+  }
+  return TEXT_FILE_EXTENSIONS.has(getFileExtension(file.name));
+}
+
+function AttachmentInlinePreview({ file, onOpen }: { file: Attachment; onOpen: () => void }) {
+  const [textContent, setTextContent] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const fileUrl = file.url;
+  const fileName = file.name;
+  const fileType = file.type;
+  const previewable = useMemo(() => isTextPreviewable(file), [fileName, fileType]);
+
+  useEffect(() => {
+    if (!previewable) {
+      setTextContent('');
+      setError('');
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const loadText = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const response = await fetch(file.url, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error(`Failed to load file (${response.status})`);
+        }
+        const content = await response.text();
+        if (!cancelled) {
+          setTextContent(content.slice(0, 2000));
+        }
+      } catch (error: any) {
+        if (controller.signal.aborted) return;
+        if (!cancelled) {
+          setTextContent('');
+          setError(error?.message || 'Could not load preview.');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadText();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [fileUrl, previewable]);
+
+  if (file.type.startsWith('image/')) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        className="relative aspect-video w-full overflow-hidden rounded border bg-slate-100 text-left transition-opacity hover:opacity-95"
+      >
+        <img
+          src={file.url}
+          alt={file.name}
+          className="w-full h-full object-cover"
+          referrerPolicy="no-referrer"
+        />
+      </button>
+    );
+  }
+
+  if (!previewable) {
+    return null;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="relative aspect-video w-full overflow-hidden rounded border bg-slate-50 text-left transition-opacity hover:opacity-95"
+    >
+      {loading ? (
+        <div className="flex h-full items-center justify-center text-[11px] text-text-light">
+          Loading preview...
+        </div>
+      ) : error ? (
+        <div className="flex h-full items-center justify-center p-4 text-center text-[10px] text-text-light">
+          {error}
+        </div>
+      ) : (
+        <pre className="h-full overflow-auto p-3 text-[10px] leading-relaxed text-text-dark whitespace-pre-wrap break-words font-mono">
+          {textContent}
+        </pre>
+      )}
+    </button>
+  );
+}
+
 function toDateTimeInputValue(value?: { toDate?: () => Date } | null) {
   if (!value?.toDate) return '';
   const date = value.toDate();
@@ -98,7 +248,6 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
   const [viewingFile, setViewingFile] = useState<Attachment | null>(null);
   const [collapsedComments, setCollapsedComments] = useState<Record<string, boolean>>({});
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -280,12 +429,15 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
   const handleFileUpload = async (files: File[]) => {
     setUploading(true);
     setUploadProgress(0);
-    const uploaded: Attachment[] = [...newAttachments];
+    const nextTicketAttachments: Attachment[] = [...(ticket.attachments || [])];
+    let attachedFiles = 0;
+    let importedEmails = 0;
 
     try {
       for (const file of files) {
         if (file.name.toLowerCase().endsWith('.msg')) {
           const result = await importEmail(ticket.id, file);
+          importedEmails += 1;
           if (result.parseError) {
             toast.warning(`Imported ${file.name}, but parsing was limited`);
           } else {
@@ -295,14 +447,28 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
           continue;
         }
 
-        uploaded.push(await uploadFile(file, setUploadProgress));
-        toast.success(`Uploaded ${file.name}`);
+        nextTicketAttachments.push(await uploadFile(file, setUploadProgress));
+        attachedFiles += 1;
+      }
+
+      if (attachedFiles > 0) {
+        await updateTicket(ticket.id, {
+          attachments: nextTicketAttachments,
+        });
+        toast.success(
+          attachedFiles === 1
+            ? 'Attachment saved'
+            : `${attachedFiles} attachments saved`,
+        );
+      }
+
+      if (importedEmails > 0) {
+        await refreshComments();
       }
     } catch (error: any) {
       console.error('Upload error:', error);
       toast.error(`Failed to upload file: ${error.message || 'Unknown error'}`);
     } finally {
-      setNewAttachments(uploaded);
       setUploading(false);
       setUploadProgress(0);
     }
@@ -310,7 +476,7 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
 
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newComment.trim() && newAttachments.length === 0) return;
+    if (!newComment.trim()) return;
 
     setLoading(true);
     try {
@@ -318,18 +484,11 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
         ticketId: ticket.id,
         content: newComment,
         isInternal: false,
-        attachments: newAttachments,
+        attachments: [],
         sourceType: 'manual',
       });
 
-      if (newAttachments.length > 0) {
-        await updateTicket(ticket.id, {
-          attachments: [...(ticket.attachments || []), ...newAttachments],
-        });
-      }
-
       setNewComment('');
-      setNewAttachments([]);
       await refreshComments();
       toast.success('Update saved');
     } catch (error: any) {
@@ -470,7 +629,7 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
             type="submit"
             form="ticket-update-form"
             className="mt-[18px] bg-primary px-6 font-bold text-white hover:bg-primary/90"
-            disabled={loading || uploading || (!newComment.trim() && newAttachments.length === 0)}
+            disabled={loading || uploading || !newComment.trim()}
           >
             {loading ? 'Saving...' : 'Save Update'}
           </Button>
@@ -493,7 +652,7 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
       </div>
 
       <ScrollArea className="flex-1 min-h-0">
-        <div className="p-8 space-y-8 max-w-4xl">
+        <div className="flex min-h-full w-full max-w-[1400px] flex-col p-8">
           <div className="grid grid-cols-2 gap-6 p-6 bg-[#f8fafc] rounded-xl border border-border-theme">
             <div>
               <div className="text-[10px] font-bold uppercase tracking-widest text-text-light mb-1">Requestor</div>
@@ -578,7 +737,7 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
             </div>
           </div>
 
-          <section>
+          <section className="mt-8">
             <h4 className="text-[10px] font-bold uppercase tracking-widest text-text-light mb-3">Description</h4>
             {descriptionEmail ? (
               <div className="rounded-lg border border-blue-100 bg-blue-50/70">
@@ -604,7 +763,7 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
 
           <FileViewer file={viewingFile} onClose={() => setViewingFile(null)} />
 
-          <section className="space-y-4">
+          <section className="mt-8 space-y-4">
             <div className="flex items-center justify-between gap-3">
               <h4 className="text-[10px] font-bold uppercase tracking-widest text-text-light">Activity Log & Updates</h4>
               <Button
@@ -733,21 +892,15 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
             </div>
           </section>
 
-          <section className="space-y-4 pt-4">
+          <section className="mt-8 flex flex-1 min-h-[340px] flex-col space-y-4">
             <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Add Update</div>
-            <form id="ticket-update-form" onSubmit={handleAddComment} className="space-y-4">
+            <form id="ticket-update-form" onSubmit={handleAddComment} className="flex flex-1 flex-col space-y-4">
               <Textarea
-                placeholder="Add a private note or response to requestor..."
-                className="min-h-[120px] bg-white border-border-theme rounded-xl p-4 text-sm focus-visible:ring-primary"
+                placeholder="Add an update..."
+                className="min-h-[180px] flex-1 bg-white border-border-theme rounded-xl p-4 text-sm focus-visible:ring-primary"
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
               />
-
-              {newAttachments.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {newAttachments.map((file) => renderAttachmentChip(file))}
-                </div>
-              )}
 
               <div
                 className={`border-2 border-dashed border-border-theme p-6 text-center rounded-xl transition-all cursor-pointer ${
@@ -785,14 +938,14 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
                 ) : (
                   <div className="space-y-1">
                     <p>Drag and drop Outlook emails or attachments here</p>
-                    <p className="text-[11px]">`.msg` files become searchable updates and stay attached to the ticket.</p>
+                    <p className="text-[11px]">Attachments save right away. `.msg` files become searchable updates and stay attached to the ticket.</p>
                   </div>
                 )}
               </div>
 
-              <div className="flex items-center justify-between">
+              <div className="mt-auto flex items-center justify-between">
                 <div />
-                <Button type="submit" className="bg-primary hover:bg-primary/90 text-white font-bold px-8" disabled={loading || uploading || (!newComment.trim() && newAttachments.length === 0)}>
+                <Button type="submit" className="bg-primary hover:bg-primary/90 text-white font-bold px-8" disabled={loading || uploading || !newComment.trim()}>
                   Save Update
                 </Button>
               </div>
@@ -800,7 +953,7 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
           </section>
 
           {ticket.attachments && ticket.attachments.length > 0 && (
-            <section>
+            <section className="mt-8">
               <h4 className="text-[10px] font-bold uppercase tracking-widest text-text-light mb-3">Attachments</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {ticket.attachments.map((file) => (
@@ -813,16 +966,7 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
                       <span className="text-[10px] text-text-light shrink-0">({(file.size / 1024).toFixed(1)} KB)</span>
                     </div>
 
-                    {file.type.startsWith('image/') && (
-                      <div className="relative aspect-video w-full overflow-hidden rounded border bg-slate-100">
-                        <img
-                          src={file.url}
-                          alt={file.name}
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      </div>
-                    )}
+                    <AttachmentInlinePreview file={file} onOpen={() => setViewingFile(file)} />
 
                     {file.name.toLowerCase().endsWith('.msg') && (
                       <div className="p-2 bg-amber-50 rounded border border-amber-100 text-[10px] text-amber-700">

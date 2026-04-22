@@ -102,8 +102,10 @@ export function CreateTicketDialog() {
     try {
       for (const file of files) {
         if (file.name.toLowerCase().endsWith('.msg')) {
-          const result = await importEmailPreview(file);
-          nextAttachments.push(result.attachment);
+          const result = await importEmailPreview(file, { persistUpload: true });
+          if (result.attachment) {
+            nextAttachments.push(result.attachment);
+          }
           applyImportedDraft(result.draft);
           setImportedEmailCount((count) => count + 1);
           if (result.parseError) {

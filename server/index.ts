@@ -402,6 +402,7 @@ app.post('/api/tickets/:id/import-email', requireUser, upload.single('file'), as
 });
 
 app.post('/api/email-import-preview', requireUser, upload.single('file'), async (req, res, next) => {
+  let shouldDeleteTempFile = false;
   try {
     if (!req.file) {
       res.status(400).json({ error: 'No file uploaded' });
@@ -412,7 +413,9 @@ app.post('/api/email-import-preview', requireUser, upload.single('file'), async 
       return;
     }
 
-    const attachment = createAttachmentFromUpload(req.file);
+    const keepUpload = String(req.body.persistUpload || '').toLowerCase() === 'true';
+    shouldDeleteTempFile = !keepUpload;
+    const attachment = keepUpload ? createAttachmentFromUpload(req.file) : undefined;
     let parsedEmail: {
       subject?: string | null;
       from?: string | null;
@@ -445,6 +448,10 @@ app.post('/api/email-import-preview', requireUser, upload.single('file'), async 
     });
   } catch (error) {
     next(error);
+  } finally {
+    if (shouldDeleteTempFile && req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
   }
 });
 
@@ -455,6 +462,38 @@ app.post('/api/uploads', upload.single('file'), (req, res) => {
   }
 
   res.status(201).json(createAttachmentFromUpload(req.file));
+});
+
+app.delete('/api/uploads', async (req, res, next) => {
+  try {
+    const attachmentUrl = String(req.query.url || '');
+    if (!attachmentUrl) {
+      res.status(400).json({ error: 'Attachment URL is required' });
+      return;
+    }
+
+    const uploadsPrefix = '/uploads/';
+    if (!attachmentUrl.startsWith(uploadsPrefix)) {
+      res.status(400).json({ error: 'Only uploaded files can be deleted' });
+      return;
+    }
+
+    const isReferenced = await store.isAttachmentReferenced(attachmentUrl);
+    if (isReferenced) {
+      res.status(409).json({ error: 'Attachment is already linked to a ticket or update' });
+      return;
+    }
+
+    const fileName = attachmentUrl.slice(uploadsPrefix.length);
+    const filePath = path.join(uploadsDir, fileName);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+
+    res.status(204).end();
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.delete('/api/tickets/:ticketId/attachments', async (req, res, next) => {

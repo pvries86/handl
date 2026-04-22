@@ -1,5 +1,5 @@
-import React from 'react';
-import { Download, ExternalLink, File as FileIcon, FileText, X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Download, ExternalLink, File as FileIcon, FileText } from 'lucide-react';
 import { Attachment } from '../types';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,7 +14,112 @@ interface FileViewerProps {
   onClose: () => void;
 }
 
+const TEXT_FILE_EXTENSIONS = new Set([
+  'txt',
+  'log',
+  'md',
+  'csv',
+  'json',
+  'jsonl',
+  'xml',
+  'yaml',
+  'yml',
+  'ini',
+  'cfg',
+  'conf',
+  'env',
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
+  'css',
+  'scss',
+  'html',
+  'htm',
+  'sql',
+  'py',
+  'ps1',
+  'sh',
+  'bat',
+  'cmd',
+]);
+
+function getFileExtension(name: string) {
+  const parts = name.toLowerCase().split('.');
+  return parts.length > 1 ? parts.pop() || '' : '';
+}
+
+function isTextPreviewable(file: Attachment | null) {
+  if (!file) return false;
+  const type = file.type.toLowerCase();
+  if (
+    type.startsWith('text/') ||
+    type.includes('json') ||
+    type.includes('xml') ||
+    type.includes('javascript') ||
+    type.includes('typescript') ||
+    type.includes('csv')
+  ) {
+    return true;
+  }
+  return TEXT_FILE_EXTENSIONS.has(getFileExtension(file.name));
+}
+
 export function FileViewer({ file, onClose }: FileViewerProps) {
+  const [textContent, setTextContent] = useState('');
+  const [loadingText, setLoadingText] = useState(false);
+  const [textError, setTextError] = useState('');
+  const fileUrl = file?.url || '';
+  const fileName = file?.name || '';
+  const fileType = file?.type || '';
+  const isTextFile = useMemo(() => isTextPreviewable(file), [fileName, fileType]);
+
+  useEffect(() => {
+    if (!file || !isTextFile) {
+      setTextContent('');
+      setTextError('');
+      setLoadingText(false);
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const loadText = async () => {
+      setLoadingText(true);
+      setTextError('');
+      try {
+        const response = await fetch(file.url, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error(`Failed to load file (${response.status})`);
+        }
+        const content = await response.text();
+        if (!cancelled) {
+          setTextContent(content);
+        }
+      } catch (error: any) {
+        if (controller.signal.aborted) return;
+        if (!cancelled) {
+          setTextContent('');
+          setTextError(error?.message || 'Could not preview this text file.');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingText(false);
+        }
+      }
+    };
+
+    void loadText();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [fileUrl, isTextFile]);
+
   if (!file) return null;
 
   const isImage = file.type.startsWith('image/');
@@ -44,9 +149,6 @@ export function FileViewer({ file, onClose }: FileViewerProps) {
                 <ExternalLink className="w-3 h-3 mr-1" /> Open Original
               </a>
             </Button>
-            <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
-              <X className="w-4 h-4" />
-            </Button>
           </div>
         </DialogHeader>
 
@@ -64,6 +166,25 @@ export function FileViewer({ file, onClose }: FileViewerProps) {
               className="w-full h-full border-none rounded-lg shadow-lg bg-white"
               title={file.name}
             />
+          ) : isTextFile ? (
+            <div className="h-full w-full overflow-hidden rounded-lg border bg-white shadow-lg">
+              {loadingText ? (
+                <div className="flex h-full items-center justify-center text-sm text-text-light">
+                  Loading preview...
+                </div>
+              ) : textError ? (
+                <div className="flex h-full items-center justify-center p-8">
+                  <div className="max-w-md text-center">
+                    <h3 className="font-bold text-text-dark">Preview unavailable</h3>
+                    <p className="mt-2 text-xs text-text-light">{textError}</p>
+                  </div>
+                </div>
+              ) : (
+                <pre className="h-full overflow-auto p-4 text-xs leading-relaxed text-text-dark whitespace-pre-wrap break-words font-mono">
+                  {textContent}
+                </pre>
+              )}
+            </div>
           ) : (
             <div className="text-center p-12 bg-white rounded-2xl shadow-sm border max-w-sm">
               <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">

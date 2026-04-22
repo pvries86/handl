@@ -26,6 +26,7 @@ import { UserManagement } from './components/UserManagement';
 import { createTicket, deleteTicket, importEmailPreview, updateTicket } from './lib/api';
 
 type DeadlineFilter = 'all' | 'overdue' | 'today' | 'this_week' | 'none';
+type TicketSort = 'changed_desc' | 'created_desc' | 'priority_desc' | 'deadline_asc';
 
 function startOfToday() {
   const today = new Date();
@@ -77,6 +78,7 @@ export default function App() {
   const [showListFilters, setShowListFilters] = useState(false);
   const [priorityFilter, setPriorityFilter] = useState<TicketPriority | 'all'>('all');
   const [deadlineFilter, setDeadlineFilter] = useState<DeadlineFilter>('all');
+  const [ticketSort, setTicketSort] = useState<TicketSort>('changed_desc');
   const [unassignedOnly, setUnassignedOnly] = useState(false);
   const [waitingOnly, setWaitingOnly] = useState(false);
   const [creatingFromMail, setCreatingFromMail] = useState(false);
@@ -97,8 +99,14 @@ export default function App() {
     const todayStart = startOfToday();
     const todayEnd = endOfToday();
     const weekEnd = endOfThisWeek();
+    const priorityWeight: Record<TicketPriority, number> = {
+      low: 0,
+      medium: 1,
+      high: 2,
+      critical: 3,
+    };
 
-    return tickets.filter((ticket) => {
+    const filtered = tickets.filter((ticket) => {
       if (priorityFilter !== 'all' && ticket.priority !== priorityFilter) return false;
       if (unassignedOnly && ticket.assigneeId) return false;
       if (waitingOnly && ticket.status !== 'waiting') return false;
@@ -112,7 +120,36 @@ export default function App() {
 
       return true;
     });
-  }, [deadlineFilter, priorityFilter, tickets, unassignedOnly, waitingOnly]);
+
+    filtered.sort((a, b) => {
+      if (ticketSort === 'created_desc') {
+        const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+        const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+        return bTime - aTime;
+      }
+      if (ticketSort === 'priority_desc') {
+        const byPriority = priorityWeight[b.priority] - priorityWeight[a.priority];
+        if (byPriority !== 0) return byPriority;
+        const aTime = a.updatedAt?.toDate ? a.updatedAt.toDate().getTime() : 0;
+        const bTime = b.updatedAt?.toDate ? b.updatedAt.toDate().getTime() : 0;
+        return bTime - aTime;
+      }
+      if (ticketSort === 'deadline_asc') {
+        const aTime = a.deadline?.toDate ? a.deadline.toDate().getTime() : Number.MAX_SAFE_INTEGER;
+        const bTime = b.deadline?.toDate ? b.deadline.toDate().getTime() : Number.MAX_SAFE_INTEGER;
+        if (aTime !== bTime) return aTime - bTime;
+        const aUpdated = a.updatedAt?.toDate ? a.updatedAt.toDate().getTime() : 0;
+        const bUpdated = b.updatedAt?.toDate ? b.updatedAt.toDate().getTime() : 0;
+        return bUpdated - aUpdated;
+      }
+
+      const aTime = a.updatedAt?.toDate ? a.updatedAt.toDate().getTime() : 0;
+      const bTime = b.updatedAt?.toDate ? b.updatedAt.toDate().getTime() : 0;
+      return bTime - aTime;
+    });
+
+    return filtered;
+  }, [deadlineFilter, priorityFilter, ticketSort, tickets, unassignedOnly, waitingOnly]);
 
   const allVisibleSelected = filteredTickets.length > 0 && filteredTickets.every((ticket) => selectedTicketIds.includes(ticket.id));
   const bulkMode = selectedTicketIds.length > 0;
@@ -183,7 +220,7 @@ export default function App() {
 
     setCreatingFromMail(true);
     try {
-      const result = await importEmailPreview(mailFile);
+      const result = await importEmailPreview(mailFile, { persistUpload: false });
       const ticket = await createTicket({
         title: result.draft.title || '(Imported email)',
         description: result.draft.description || 'Imported from Outlook email.',
@@ -404,7 +441,17 @@ export default function App() {
             <div className="border-b border-border-theme bg-white/50">
               <div className="p-4 flex items-center justify-between">
               <span className="font-bold text-sm">Tickets ({filteredTickets.length})</span>
-              <div className="flex gap-1">
+              <div className="flex items-center gap-2">
+                <select
+                  value={ticketSort}
+                  onChange={(e) => setTicketSort(e.target.value as TicketSort)}
+                  className="h-8 rounded-md border border-border-theme bg-white px-2 text-[11px] text-text-dark"
+                >
+                  <option value="changed_desc">Changed</option>
+                  <option value="created_desc">Created</option>
+                  <option value="priority_desc">Priority</option>
+                  <option value="deadline_asc">Deadline</option>
+                </select>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -605,7 +652,7 @@ export default function App() {
                           </button>
                           <span>#{ticket.id.slice(0, 8).toUpperCase()}</span>
                         </div>
-                        <span>{ticket.createdAt?.toDate ? format(ticket.createdAt.toDate(), 'HH:mm') : 'Now'}</span>
+                        <span>{ticket.updatedAt?.toDate ? format(ticket.updatedAt.toDate(), 'HH:mm') : 'Now'}</span>
                       </div>
                       <h3 className="font-semibold text-sm mb-2 line-clamp-1">
                         {ticket.title}
@@ -627,7 +674,9 @@ export default function App() {
                         }`}>
                           {ticket.status.replace('_', ' ')}
                         </Badge>
-                        <span className="text-[10px] text-text-light">{ticket.requesterName}</span>
+                        <span className="text-[10px] text-text-light">
+                          {ticket.updatedAt?.toDate ? `Changed ${format(ticket.updatedAt.toDate(), 'MMM d')}` : ticket.requesterName}
+                        </span>
                       </div>
                     </div>
                     );
