@@ -71,6 +71,24 @@ async function requireAdmin(req: express.Request, res: express.Response, next: e
   }
 }
 
+function canManageAllTickets(user: { role: string }) {
+  return user.role === 'admin' || user.role === 'agent';
+}
+
+async function requireTicketAccess(req: express.Request, res: express.Response, ticketId: string) {
+  const user = res.locals.user;
+  const ticket = await store.getTicket(ticketId);
+  if (!ticket) {
+    res.status(404).json({ error: 'Ticket not found' });
+    return null;
+  }
+  if (!canManageAllTickets(user) && ticket.createdById !== user.uid) {
+    res.status(403).json({ error: 'You do not have access to this ticket' });
+    return null;
+  }
+  return { user, ticket };
+}
+
 function createAttachmentFromUpload(file: Express.Multer.File): Attachment {
   return {
     name: file.originalname,
@@ -255,13 +273,45 @@ app.patch('/api/users/:id', requireAdmin, async (req, res, next) => {
   }
 });
 
-app.get('/api/tickets', async (req, res, next) => {
+app.delete('/api/users/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const currentUser = res.locals.user;
+    if (currentUser.uid === req.params.id) {
+      res.status(400).json({ error: 'You cannot delete your own account' });
+      return;
+    }
+
+    const targetUser = await store.getUser(req.params.id);
+    if (!targetUser) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    if (targetUser.role === 'admin') {
+      res.status(400).json({ error: 'Admin accounts cannot be deleted from the app' });
+      return;
+    }
+
+    const deleted = await store.deleteUser(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    res.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/tickets', requireUser, async (req, res, next) => {
   try {
     const tickets = await store.listTickets(
       String(req.query.filter || 'all'),
       req.query.currentUserId ? String(req.query.currentUserId) : undefined,
       req.query.currentUserEmail ? String(req.query.currentUserEmail) : undefined,
       req.query.search ? String(req.query.search) : undefined,
+      res.locals.user,
     );
     res.json(tickets);
   } catch (error) {
@@ -269,17 +319,45 @@ app.get('/api/tickets', async (req, res, next) => {
   }
 });
 
-app.post('/api/tickets', async (req, res, next) => {
+app.post('/api/tickets', requireUser, async (req, res, next) => {
   try {
-    res.status(201).json(await store.createTicket(req.body));
+    res.status(201).json(await store.createTicket({
+      ...req.body,
+      createdById: res.locals.user.uid,
+      createdByName: res.locals.user.displayName,
+    }));
   } catch (error) {
     next(error);
   }
 });
 
-app.patch('/api/tickets/:id', async (req, res, next) => {
+app.patch('/api/tickets/:id', requireUser, async (req, res, next) => {
   try {
-    const ticket = await store.updateTicket(req.params.id, req.body);
+    const access = await requireTicketAccess(req, res, req.params.id);
+    if (!access) return;
+
+    const updates = { ...req.body };
+    if (updates.assigneeId !== undefined) {
+      if (!canManageAllTickets(res.locals.user)) {
+        res.status(403).json({ error: 'Only agents and admins can manage assignments' });
+        return;
+      }
+
+      if (!updates.assigneeId) {
+        updates.assigneeId = undefined;
+        updates.assigneeName = undefined;
+      } else {
+        const assignee = await store.getUser(String(updates.assigneeId));
+        if (!assignee || !canManageAllTickets(assignee)) {
+          res.status(400).json({ error: 'Assignee must be an agent or admin' });
+          return;
+        }
+        updates.assigneeId = assignee.uid;
+        updates.assigneeName = assignee.displayName;
+      }
+    }
+
+    const ticket = await store.updateTicket(req.params.id, updates);
     if (!ticket) {
       res.status(404).json({ error: 'Ticket not found' });
       return;
@@ -290,8 +368,11 @@ app.patch('/api/tickets/:id', async (req, res, next) => {
   }
 });
 
-app.delete('/api/tickets/:id', async (req, res, next) => {
+app.delete('/api/tickets/:id', requireUser, async (req, res, next) => {
   try {
+    const access = await requireTicketAccess(req, res, req.params.id);
+    if (!access) return;
+
     const result = await store.deleteTicket(req.params.id);
     if (!result) {
       res.status(404).json({ error: 'Ticket not found' });
@@ -314,8 +395,10 @@ app.delete('/api/tickets/:id', async (req, res, next) => {
   }
 });
 
-app.get('/api/tickets/:id/comments', async (req, res, next) => {
+app.get('/api/tickets/:id/comments', requireUser, async (req, res, next) => {
   try {
+    const access = await requireTicketAccess(req, res, req.params.id);
+    if (!access) return;
     res.json(await store.listComments(req.params.id));
   } catch (error) {
     next(error);
@@ -324,6 +407,9 @@ app.get('/api/tickets/:id/comments', async (req, res, next) => {
 
 app.post('/api/tickets/:id/comments', requireUser, async (req, res, next) => {
   try {
+    const access = await requireTicketAccess(req, res, req.params.id);
+    if (!access) return;
+
     const comment = await store.createComment({
       ...req.body,
       ticketId: req.params.id,
@@ -336,8 +422,11 @@ app.post('/api/tickets/:id/comments', requireUser, async (req, res, next) => {
   }
 });
 
-app.patch('/api/tickets/:ticketId/comments/:commentId', async (req, res, next) => {
+app.patch('/api/tickets/:ticketId/comments/:commentId', requireUser, async (req, res, next) => {
   try {
+    const access = await requireTicketAccess(req, res, req.params.ticketId);
+    if (!access) return;
+
     const comment = await store.updateComment(req.params.ticketId, req.params.commentId, {
       content: req.body.content,
       isInternal: req.body.isInternal,
@@ -352,8 +441,11 @@ app.patch('/api/tickets/:ticketId/comments/:commentId', async (req, res, next) =
   }
 });
 
-app.delete('/api/tickets/:ticketId/comments/:commentId', async (req, res, next) => {
+app.delete('/api/tickets/:ticketId/comments/:commentId', requireUser, async (req, res, next) => {
   try {
+    const access = await requireTicketAccess(req, res, req.params.ticketId);
+    if (!access) return;
+
     const deleted = await store.deleteComment(req.params.ticketId, req.params.commentId);
     if (!deleted) {
       res.status(404).json({ error: 'Comment not found' });
@@ -367,6 +459,9 @@ app.delete('/api/tickets/:ticketId/comments/:commentId', async (req, res, next) 
 
 app.post('/api/tickets/:id/import-email', requireUser, upload.single('file'), async (req, res, next) => {
   try {
+    const access = await requireTicketAccess(req, res, req.params.id);
+    if (!access) return;
+
     if (!req.file) {
       res.status(400).json({ error: 'No file uploaded' });
       return;
@@ -455,7 +550,7 @@ app.post('/api/email-import-preview', requireUser, upload.single('file'), async 
   }
 });
 
-app.post('/api/uploads', upload.single('file'), (req, res) => {
+app.post('/api/uploads', requireUser, upload.single('file'), (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: 'No file uploaded' });
     return;
@@ -464,7 +559,7 @@ app.post('/api/uploads', upload.single('file'), (req, res) => {
   res.status(201).json(createAttachmentFromUpload(req.file));
 });
 
-app.delete('/api/uploads', async (req, res, next) => {
+app.delete('/api/uploads', requireUser, async (req, res, next) => {
   try {
     const attachmentUrl = String(req.query.url || '');
     if (!attachmentUrl) {
@@ -496,8 +591,11 @@ app.delete('/api/uploads', async (req, res, next) => {
   }
 });
 
-app.delete('/api/tickets/:ticketId/attachments', async (req, res, next) => {
+app.delete('/api/tickets/:ticketId/attachments', requireUser, async (req, res, next) => {
   try {
+    const access = await requireTicketAccess(req, res, req.params.ticketId);
+    if (!access) return;
+
     const attachmentUrl = String(req.query.url || '');
     if (!attachmentUrl) {
       res.status(400).json({ error: 'Attachment URL is required' });

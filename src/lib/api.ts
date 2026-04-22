@@ -98,6 +98,12 @@ export async function updateUser(id: string, updates: Partial<Pick<UserProfile, 
   });
 }
 
+export async function deleteUser(id: string) {
+  return request<void>(`/api/users/${id}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function listTickets(filter: string, currentUserId?: string, currentUserEmail?: string, search?: string) {
   const params = new URLSearchParams({ filter });
   if (currentUserId) params.set('currentUserId', currentUserId);

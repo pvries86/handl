@@ -332,8 +332,14 @@ export default function App() {
 
         <nav className="flex-1 space-y-1">
           {[
-            { id: 'all', label: 'All Open Tickets', icon: TicketIcon },
-            { id: 'assigned', label: 'Assigned to Me', icon: UserIcon },
+            {
+              id: 'all',
+              label: profile?.role === 'user' ? 'My Open Tickets' : 'All Open Tickets',
+              icon: TicketIcon,
+            },
+            ...(profile?.role === 'admin' || profile?.role === 'agent'
+              ? [{ id: 'assigned', label: 'Assigned to Me', icon: UserIcon }]
+              : []),
             { id: 'archived', label: 'Archived Tasks', icon: History },
             ...(profile?.role === 'admin' ? [{ id: 'users', label: 'Users', icon: UserIcon }] : []),
           ].map((item) => (

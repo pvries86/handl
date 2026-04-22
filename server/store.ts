@@ -274,6 +274,23 @@ export class Store {
     return this.getUser(uid);
   }
 
+  async deleteUser(uid: string): Promise<boolean> {
+    const user = await this.getUser(uid);
+    if (!user) return false;
+
+    if (this.pg) {
+      await this.pg.query('UPDATE tickets SET created_by_id = NULL WHERE created_by_id = $1', [uid]);
+      await this.pg.query('UPDATE tickets SET assignee_id = NULL, assignee_name = NULL WHERE assignee_id = $1', [uid]);
+      await this.pg.query('DELETE FROM users WHERE uid = $1', [uid]);
+    } else {
+      this.sqlite!.prepare('UPDATE tickets SET created_by_id = NULL WHERE created_by_id = ?').run(uid);
+      this.sqlite!.prepare('UPDATE tickets SET assignee_id = NULL, assignee_name = NULL WHERE assignee_id = ?').run(uid);
+      this.sqlite!.prepare('DELETE FROM users WHERE uid = ?').run(uid);
+    }
+
+    return true;
+  }
+
   async listAgents(): Promise<UserProfile[]> {
     const rows = this.pg
       ? (await this.pg.query('SELECT uid, email, display_name AS "displayName", photo_url AS "photoURL", role FROM users WHERE role IN ($1, $2) ORDER BY display_name', ['admin', 'agent'])).rows
@@ -352,7 +369,13 @@ export class Store {
     return rows[0] || null;
   }
 
-  async listTickets(filter = 'all', currentUserId?: string, currentUserEmail?: string, search?: string): Promise<Ticket[]> {
+  async listTickets(
+    filter = 'all',
+    currentUserId?: string,
+    currentUserEmail?: string,
+    search?: string,
+    viewer?: Pick<UserProfile, 'uid' | 'role'>,
+  ): Promise<Ticket[]> {
     const conditions: string[] = [];
     const params: unknown[] = [];
 
@@ -389,6 +412,11 @@ export class Store {
         )
       )`);
       params.push(term, term, term, term, term, term, term);
+    }
+
+    if (viewer?.role === 'user') {
+      conditions.push('created_by_id = ?');
+      params.push(viewer.uid);
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { UserProfile } from '../types';
-import { listUsers, updateUser } from '../lib/api';
+import { deleteUser, listUsers, updateUser } from '../lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -23,6 +23,7 @@ import { toast } from 'sonner';
 type EditableUser = UserProfile & {
   dirty?: boolean;
   saving?: boolean;
+  deleting?: boolean;
 };
 
 export function UserManagement() {
@@ -91,6 +92,27 @@ export function UserManagement() {
     }
   };
 
+  const removeUser = async (user: EditableUser) => {
+    const confirmed = window.confirm(`Delete ${user.displayName} (${user.email})?`);
+    if (!confirmed) return;
+
+    setUsers((current) =>
+      current.map((item) => (item.uid === user.uid ? { ...item, deleting: true } : item)),
+    );
+
+    try {
+      await deleteUser(user.uid);
+      setUsers((current) => current.filter((item) => item.uid !== user.uid));
+      toast.success(`Deleted ${user.displayName}`);
+    } catch (error: any) {
+      console.error('Failed to delete user', error);
+      setUsers((current) =>
+        current.map((item) => (item.uid === user.uid ? { ...item, deleting: false } : item)),
+      );
+      toast.error(error?.message || `Failed to delete ${user.displayName}`);
+    }
+  };
+
   return (
     <div className="flex-1 overflow-hidden bg-white">
       <div className="h-16 bg-white border-b border-border-theme flex items-center justify-between px-6 shrink-0">
@@ -118,7 +140,7 @@ export function UserManagement() {
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
-                <TableHead className="w-[120px]">Save</TableHead>
+                <TableHead className="w-[220px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -145,13 +167,27 @@ export function UserManagement() {
                     </Select>
                   </TableCell>
                   <TableCell className="align-top">
-                    <Button
-                      onClick={() => saveUser(user)}
-                      disabled={!user.dirty || user.saving}
-                      size="sm"
-                    >
-                      {user.saving ? 'Saving...' : 'Save'}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={() => saveUser(user)}
+                        disabled={!user.dirty || user.saving || user.deleting}
+                        size="sm"
+                      >
+                        {user.saving ? 'Saving...' : 'Save'}
+                      </Button>
+                      {user.role !== 'admin' && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+                          onClick={() => removeUser(user)}
+                          disabled={user.saving || user.deleting}
+                          size="sm"
+                        >
+                          {user.deleting ? 'Deleting...' : 'Delete'}
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
