@@ -1,0 +1,1013 @@
+openapi: 3.1.0
+info:
+  title: Handl API
+  version: 1.0.0
+  summary: REST API for Handl
+  description: |
+    Handl exposes a JSON HTTP API for the web frontend, scripts, Postman, and other integrations.
+
+    Authentication supports:
+    - `Authorization: Bearer hdl_...`
+    - `x-api-key: hdl_...`
+    - legacy frontend auth via `x-user-id`
+servers:
+  - url: http://localhost:3000
+    description: Local API server
+  - url: http://localhost:5173
+    description: Vite dev server proxy
+tags:
+  - name: Health
+  - name: Auth
+  - name: API Tokens
+  - name: Users
+  - name: Requesters
+  - name: Tickets
+  - name: Comments
+  - name: Email Import
+  - name: Uploads
+security:
+  - bearerAuth: []
+  - apiKeyHeader: []
+  - legacyUserIdHeader: []
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      security: []
+      summary: Health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: API is available
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+              example:
+                ok: true
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Sign in with a provisioned account
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current authenticated user
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: Current user or null when unauthenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    anyOf:
+                      - $ref: '#/components/schemas/UserProfile'
+                      - type: 'null'
+                required: [user]
+
+  /api/api-tokens:
+    get:
+      tags: [API Tokens]
+      summary: List API tokens for the current user
+      operationId: listApiTokens
+      responses:
+        '200':
+          description: API tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApiToken'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [API Tokens]
+      summary: Create an API token for the current user
+      operationId: createApiToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiTokenRequest'
+      responses:
+        '201':
+          description: API token created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedApiToken'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/api-tokens/{id}:
+    delete:
+      tags: [API Tokens]
+      summary: Revoke an API token owned by the current user
+      operationId: deleteApiToken
+      parameters:
+        - $ref: '#/components/parameters/TokenId'
+      responses:
+        '204':
+          description: Token deleted
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/users/agents:
+    get:
+      tags: [Users]
+      summary: List assignable agents and admins
+      operationId: listAgents
+      responses:
+        '200':
+          description: Agent/admin users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/requesters:
+    get:
+      tags: [Requesters]
+      summary: List saved requesters
+      operationId: listRequesters
+      responses:
+        '200':
+          description: Requesters
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Requester'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/users:
+    get:
+      tags: [Users]
+      summary: List users
+      description: Admin only.
+      operationId: listUsers
+      responses:
+        '200':
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserProfile'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [Users]
+      summary: Create a user
+      description: Admin only.
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/users/{id}:
+    patch:
+      tags: [Users]
+      summary: Update a user
+      description: Admin only.
+      operationId: updateUser
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [Users]
+      summary: Delete a user
+      description: Admin only.
+      operationId: deleteUser
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: User deleted
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/tickets:
+    get:
+      tags: [Tickets]
+      summary: List tickets
+      operationId: listTickets
+      parameters:
+        - in: query
+          name: filter
+          schema:
+            type: string
+            enum: [all, assigned, archived, created, new, open, in_progress, waiting, resolved, closed]
+            default: all
+        - in: query
+          name: currentUserId
+          schema:
+            type: string
+        - in: query
+          name: currentUserEmail
+          schema:
+            type: string
+        - in: query
+          name: search
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Tickets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Ticket'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [Tickets]
+      summary: Create a ticket
+      operationId: createTicket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTicketRequest'
+      responses:
+        '201':
+          description: Ticket created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticket'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/tickets/{id}:
+    get:
+      tags: [Tickets]
+      summary: Get a single ticket with comments
+      operationId: getTicket
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '200':
+          description: Ticket and comments
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketWithComments'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+    patch:
+      tags: [Tickets]
+      summary: Update a ticket
+      operationId: updateTicket
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTicketRequest'
+      responses:
+        '200':
+          description: Ticket updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticket'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [Tickets]
+      summary: Delete a ticket
+      operationId: deleteTicket
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '204':
+          description: Ticket deleted
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/tickets/{id}/comments:
+    get:
+      tags: [Comments]
+      summary: List comments for a ticket
+      operationId: listComments
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '200':
+          description: Comments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Comment'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [Comments]
+      summary: Create a comment/update
+      operationId: createComment
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequest'
+      responses:
+        '201':
+          description: Comment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/tickets/{ticketId}/comments/{commentId}:
+    patch:
+      tags: [Comments]
+      summary: Update a comment
+      operationId: updateComment
+      parameters:
+        - $ref: '#/components/parameters/TicketIdNamed'
+        - $ref: '#/components/parameters/CommentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCommentRequest'
+      responses:
+        '200':
+          description: Comment updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [Comments]
+      summary: Delete a comment
+      operationId: deleteComment
+      parameters:
+        - $ref: '#/components/parameters/TicketIdNamed'
+        - $ref: '#/components/parameters/CommentId'
+      responses:
+        '204':
+          description: Comment deleted
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/tickets/{id}/import-email:
+    post:
+      tags: [Email Import]
+      summary: Import an Outlook .msg file into an existing ticket
+      operationId: importEmailToTicket
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required: [file]
+      responses:
+        '201':
+          description: Email imported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportEmailResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/email-import-preview:
+    post:
+      tags: [Email Import]
+      summary: Preview an Outlook .msg import before creating or updating a ticket
+      operationId: previewEmailImport
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                persistUpload:
+                  type: string
+                  enum: ['true']
+              required: [file]
+      responses:
+        '201':
+          description: Email preview generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailImportPreviewResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/uploads:
+    post:
+      tags: [Uploads]
+      summary: Upload a file
+      operationId: uploadFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required: [file]
+      responses:
+        '201':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [Uploads]
+      summary: Delete an uploaded file that is not yet linked anywhere
+      operationId: deleteUploadedFile
+      parameters:
+        - $ref: '#/components/parameters/AttachmentUrlQuery'
+      responses:
+        '204':
+          description: File deleted
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/tickets/{ticketId}/attachments:
+    delete:
+      tags: [Uploads]
+      summary: Delete an attachment from a ticket and any related comments
+      operationId: deleteTicketAttachment
+      parameters:
+        - $ref: '#/components/parameters/TicketIdNamed'
+        - $ref: '#/components/parameters/AttachmentUrlQuery'
+      responses:
+        '200':
+          description: Updated ticket
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticket'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Token
+      description: Preferred auth for new integrations.
+    apiKeyHeader:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Alternative API token header.
+    legacyUserIdHeader:
+      type: apiKey
+      in: header
+      name: x-user-id
+      description: Legacy frontend/session header.
+  parameters:
+    TicketId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+    TicketIdNamed:
+      in: path
+      name: ticketId
+      required: true
+      schema:
+        type: string
+    CommentId:
+      in: path
+      name: commentId
+      required: true
+      schema:
+        type: string
+    UserId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+    TokenId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+    AttachmentUrlQuery:
+      in: query
+      name: url
+      required: true
+      schema:
+        type: string
+  responses:
+    ErrorResponse:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+    TicketStatus:
+      type: string
+      enum: [new, open, in_progress, waiting, resolved, closed]
+    TicketPriority:
+      type: string
+      enum: [low, medium, high, critical]
+    UserRole:
+      type: string
+      enum: [admin, agent, user]
+    Attachment:
+      type: object
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+        type:
+          type: string
+        size:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+      required: [name, url, type, size, createdAt]
+    Ticket:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        priority:
+          $ref: '#/components/schemas/TicketPriority'
+        requesterEmail:
+          type: string
+        requesterName:
+          type: string
+        createdById:
+          type: string
+          nullable: true
+        createdByName:
+          type: string
+          nullable: true
+        assigneeId:
+          type: string
+          nullable: true
+        assigneeName:
+          type: string
+          nullable: true
+        deadline:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        tags:
+          type: array
+          items:
+            type: string
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+      required:
+        [id, title, description, status, priority, requesterEmail, requesterName, createdAt, updatedAt, tags]
+    Requester:
+      type: object
+      properties:
+        requesterName:
+          type: string
+        requesterEmail:
+          type: string
+      required: [requesterName, requesterEmail]
+    Comment:
+      type: object
+      properties:
+        id:
+          type: string
+        ticketId:
+          type: string
+        authorId:
+          type: string
+        authorName:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        isInternal:
+          type: boolean
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+        sourceType:
+          type: string
+          enum: [manual, email_import]
+        sourceFileName:
+          type: string
+          nullable: true
+        emailSubject:
+          type: string
+          nullable: true
+        emailFrom:
+          type: string
+          nullable: true
+        emailSentAt:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, ticketId, authorId, authorName, content, createdAt, isInternal]
+    UserProfile:
+      type: object
+      properties:
+        uid:
+          type: string
+        email:
+          type: string
+        displayName:
+          type: string
+        photoURL:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+      required: [uid, email, displayName, photoURL, role]
+    ApiToken:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        name:
+          type: string
+        tokenPrefix:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, userId, name, tokenPrefix, createdAt]
+    CreatedApiToken:
+      allOf:
+        - $ref: '#/components/schemas/ApiToken'
+        - type: object
+          properties:
+            token:
+              type: string
+          required: [token]
+    ParsedEmail:
+      type: object
+      properties:
+        subject:
+          type: string
+          nullable: true
+        from:
+          type: string
+          nullable: true
+        sentAt:
+          type: string
+          format: date-time
+          nullable: true
+        body:
+          type: string
+          nullable: true
+        parseError:
+          type: string
+          nullable: true
+    ImportDraft:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        requesterName:
+          type: string
+        requesterEmail:
+          type: string
+      required: [title, description, requesterName, requesterEmail]
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        displayName:
+          type: string
+      required: [email]
+    LoginResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/UserProfile'
+        token:
+          type: string
+      required: [user, token]
+    CreateApiTokenRequest:
+      type: object
+      properties:
+        name:
+          type: string
+      required: [name]
+    CreateUserRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        displayName:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+      required: [email]
+    UpdateUserRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        photoURL:
+          type: string
+    CreateTicketRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        priority:
+          $ref: '#/components/schemas/TicketPriority'
+        requesterName:
+          type: string
+        requesterEmail:
+          type: string
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+        tags:
+          type: array
+          items:
+            type: string
+      required: [title, description, priority, requesterName]
+    UpdateTicketRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        requesterName:
+          type: string
+        requesterEmail:
+          type: string
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        priority:
+          $ref: '#/components/schemas/TicketPriority'
+        assigneeId:
+          type: string
+          nullable: true
+        assigneeName:
+          type: string
+          nullable: true
+        deadline:
+          type: string
+          format: date-time
+          nullable: true
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+    CreateCommentRequest:
+      type: object
+      properties:
+        content:
+          type: string
+        isInternal:
+          type: boolean
+          default: false
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+        sourceType:
+          type: string
+          enum: [manual, email_import]
+        sourceFileName:
+          type: string
+        emailSubject:
+          type: string
+        emailFrom:
+          type: string
+        emailSentAt:
+          type: string
+          format: date-time
+          nullable: true
+      required: [content]
+    UpdateCommentRequest:
+      type: object
+      properties:
+        content:
+          type: string
+        isInternal:
+          type: boolean
+    TicketWithComments:
+      type: object
+      properties:
+        ticket:
+          $ref: '#/components/schemas/Ticket'
+        comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+      required: [ticket, comments]
+    ImportEmailResponse:
+      type: object
+      properties:
+        ticket:
+          $ref: '#/components/schemas/Ticket'
+        comment:
+          anyOf:
+            - $ref: '#/components/schemas/Comment'
+            - type: 'null'
+        attachment:
+          $ref: '#/components/schemas/Attachment'
+        parseError:
+          type: string
+      required: [ticket, attachment]
+    EmailImportPreviewResponse:
+      type: object
+      properties:
+        attachment:
+          anyOf:
+            - $ref: '#/components/schemas/Attachment'
+            - type: 'null'
+        parseError:
+          type: string
+        parsedEmail:
+          $ref: '#/components/schemas/ParsedEmail'
+        draft:
+          $ref: '#/components/schemas/ImportDraft'
+      required: [parsedEmail, draft]

@@ -2,6 +2,8 @@
 
 Handl exposes a JSON HTTP API that can be used by Postman, scripts, automations, or other integrations.
 
+An OpenAPI specification for the current API surface is available at [docs/openapi.yaml](openapi.yaml).
+
 ## Base URL
 
 Local Docker or production server:
