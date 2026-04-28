@@ -10,6 +10,7 @@ Handl is a self-hosted ticket and work-log app for managing incoming requests, f
 - Add manual updates and keep a searchable activity log
 - Import Outlook `.msg` emails into tickets
 - Create new tickets directly from imported email
+- Poll a Gmail mailbox over IMAP and turn incoming email into tickets or updates
 - Upload and preview attachments, including images and text-based files
 - Run with SQLite by default, or Postgres if you prefer
 - Deploy as a standalone Docker container or from a published GitHub Container Registry image
@@ -136,6 +137,29 @@ Most important settings:
 - `ADMIN_EMAILS`: comma-separated bootstrap admin accounts
 - `DATABASE_URL`: Postgres connection string, optional
 - `MAX_UPLOAD_BYTES`: upload size limit in bytes
+
+### Gmail IMAP Mailbox Ingestion
+
+Handl can optionally poll a Gmail mailbox for unread messages and import them into tickets. This is disabled by default. For Gmail, enable IMAP on the mailbox, turn on 2-Step Verification, and create a Gmail app password for Handl.
+
+Example configuration:
+
+```env
+MAIL_INGEST_ENABLED=true
+MAIL_INGEST_HOST=imap.gmail.com
+MAIL_INGEST_PORT=993
+MAIL_INGEST_SECURE=true
+MAIL_INGEST_USER=org@veridox.nl
+MAIL_INGEST_PASSWORD=your-gmail-app-password
+MAIL_INGEST_FROM=paul@org.com
+MAIL_INGEST_TO=org@veridox.nl
+MAIL_INGEST_POLL_SECONDS=300
+MAIL_INGEST_ARCHIVE_AFTER_PROCESSING=true
+MAIL_INGEST_BOT_EMAIL=org@veridox.nl
+MAIL_INGEST_BOT_NAME="Handl Mail Import"
+```
+
+When enabled, Handl checks unread Inbox messages from `MAIL_INGEST_FROM` to `MAIL_INGEST_TO`. A subject tag like `[HANDL:<ticketId>]` updates that ticket. Replies without the tag are matched through message references or Gmail thread id when possible. Otherwise, Handl creates a new ticket. Successfully imported Gmail messages are archived by removing them from the Inbox, not deleted.
 
 ## API Integrations
 

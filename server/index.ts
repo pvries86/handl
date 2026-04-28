@@ -8,6 +8,7 @@ import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import MsgReader from '@kenjiuno/msgreader';
 import { Store } from './store';
+import { startMailIngest } from './mailIngest';
 import type { Attachment } from '../src/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -725,6 +726,7 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 });
 
 await store.init();
+await startMailIngest(store, dataDir);
 
 app.listen(port, () => {
   console.log(`Handl listening on http://0.0.0.0:${port}`);

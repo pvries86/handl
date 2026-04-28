@@ -47,6 +47,13 @@ export interface ApiTokenRecord {
   lastUsedAt?: string | null;
 }
 
+export interface MailIngestRecordInput {
+  imapUidKey: string;
+  messageId?: string | null;
+  gmailThreadId?: string | null;
+  ticketId: string;
+}
+
 type SqliteDatabase = import('better-sqlite3').Database;
 type PgPool = import('pg').Pool;
 
@@ -158,6 +165,18 @@ export class Store {
           last_used_at TIMESTAMPTZ
         );
 
+        CREATE TABLE IF NOT EXISTS mail_ingest_messages (
+          id TEXT PRIMARY KEY,
+          imap_uid_key TEXT UNIQUE NOT NULL,
+          message_id TEXT,
+          gmail_thread_id TEXT,
+          ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+          processed_at TIMESTAMPTZ NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mail_ingest_message_id ON mail_ingest_messages(message_id);
+        CREATE INDEX IF NOT EXISTS idx_mail_ingest_gmail_thread_id ON mail_ingest_messages(gmail_thread_id);
+
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'manual';
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS source_file_name TEXT;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS email_subject TEXT;
@@ -223,6 +242,19 @@ export class Store {
         last_used_at TEXT,
         FOREIGN KEY(user_id) REFERENCES users(uid) ON DELETE CASCADE
       );
+
+      CREATE TABLE IF NOT EXISTS mail_ingest_messages (
+        id TEXT PRIMARY KEY,
+        imap_uid_key TEXT UNIQUE NOT NULL,
+        message_id TEXT,
+        gmail_thread_id TEXT,
+        ticket_id TEXT NOT NULL,
+        processed_at TEXT NOT NULL,
+        FOREIGN KEY(ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_mail_ingest_message_id ON mail_ingest_messages(message_id);
+      CREATE INDEX IF NOT EXISTS idx_mail_ingest_gmail_thread_id ON mail_ingest_messages(gmail_thread_id);
     `);
 
     this.ensureSqliteColumn('comments', 'source_type', "TEXT NOT NULL DEFAULT 'manual'");
@@ -232,6 +264,20 @@ export class Store {
     this.ensureSqliteColumn('comments', 'email_sent_at', 'TEXT');
     this.ensureSqliteColumn('tickets', 'created_by_id', 'TEXT');
     this.ensureSqliteColumn('tickets', 'created_by_name', 'TEXT');
+  }
+
+  async getOrCreateSystemUser(email: string, displayName: string): Promise<UserProfile> {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) throw new Error('System user email is required');
+
+    const existing = await this.getUserByEmail(normalizedEmail);
+    if (existing) return existing;
+
+    return this.createUser({
+      email: normalizedEmail,
+      displayName: displayName.trim() || normalizedEmail.split('@')[0],
+      role: 'agent',
+    });
   }
 
   async listApiTokens(userId: string): Promise<ApiTokenRecord[]> {
@@ -888,6 +934,85 @@ export class Store {
       .prepare(`SELECT 1 FROM comments WHERE attachments LIKE ? LIMIT 1`)
       .get(`%${attachmentUrl}%`);
     return Boolean(commentMatch);
+  }
+
+  async hasProcessedMailMessage(imapUidKey: string): Promise<boolean> {
+    if (this.pg) {
+      const result = await this.pg.query('SELECT 1 FROM mail_ingest_messages WHERE imap_uid_key = $1 LIMIT 1', [imapUidKey]);
+      return (result.rowCount ?? 0) > 0;
+    }
+
+    const result = this.sqlite!.prepare('SELECT 1 FROM mail_ingest_messages WHERE imap_uid_key = ? LIMIT 1').get(imapUidKey);
+    return Boolean(result);
+  }
+
+  async findTicketIdForMailMessage(input: { messageIds?: string[]; gmailThreadId?: string | null }): Promise<string | null> {
+    const messageIds = Array.from(new Set((input.messageIds || []).map((id) => id.trim()).filter(Boolean)));
+
+    if (this.pg) {
+      if (messageIds.length > 0) {
+        const result = await this.pg.query(
+          `SELECT ticket_id AS "ticketId"
+             FROM mail_ingest_messages
+            WHERE message_id = ANY($1::text[])
+            ORDER BY processed_at DESC
+            LIMIT 1`,
+          [messageIds],
+        );
+        if (result.rows[0]?.ticketId) return result.rows[0].ticketId;
+      }
+
+      if (input.gmailThreadId) {
+        const result = await this.pg.query(
+          `SELECT ticket_id AS "ticketId"
+             FROM mail_ingest_messages
+            WHERE gmail_thread_id = $1
+            ORDER BY processed_at DESC
+            LIMIT 1`,
+          [input.gmailThreadId],
+        );
+        if (result.rows[0]?.ticketId) return result.rows[0].ticketId;
+      }
+
+      return null;
+    }
+
+    if (messageIds.length > 0) {
+      const placeholders = messageIds.map(() => '?').join(', ');
+      const result = this.sqlite!
+        .prepare(`SELECT ticket_id AS ticketId FROM mail_ingest_messages WHERE message_id IN (${placeholders}) ORDER BY processed_at DESC LIMIT 1`)
+        .get(...messageIds) as { ticketId?: string } | undefined;
+      if (result?.ticketId) return result.ticketId;
+    }
+
+    if (input.gmailThreadId) {
+      const result = this.sqlite!
+        .prepare('SELECT ticket_id AS ticketId FROM mail_ingest_messages WHERE gmail_thread_id = ? ORDER BY processed_at DESC LIMIT 1')
+        .get(input.gmailThreadId) as { ticketId?: string } | undefined;
+      if (result?.ticketId) return result.ticketId;
+    }
+
+    return null;
+  }
+
+  async recordMailIngestMessage(input: MailIngestRecordInput): Promise<void> {
+    const timestamp = now();
+    const id = nanoid(16);
+
+    if (this.pg) {
+      await this.pg.query(
+        `INSERT INTO mail_ingest_messages (id, imap_uid_key, message_id, gmail_thread_id, ticket_id, processed_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (imap_uid_key) DO NOTHING`,
+        [id, input.imapUidKey, input.messageId || null, input.gmailThreadId || null, input.ticketId, timestamp],
+      );
+      return;
+    }
+
+    this.sqlite!.prepare(
+      `INSERT OR IGNORE INTO mail_ingest_messages (id, imap_uid_key, message_id, gmail_thread_id, ticket_id, processed_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(id, input.imapUidKey, input.messageId || null, input.gmailThreadId || null, input.ticketId, timestamp);
   }
 
   private async getUserByEmail(email: string): Promise<UserProfile | null> {
