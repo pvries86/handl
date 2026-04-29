@@ -309,9 +309,14 @@ function parseEmailStyleDescription(description: string) {
   return {
     subject: match[1].trim(),
     from: match[2].trim(),
-    sent: match[3].trim(),
+    sent: formatMailDate(match[3].trim()),
     body: (match[4] || '').trim(),
   };
+}
+
+function formatMailDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : format(date, 'MMM d, yyyy HH:mm');
 }
 
 export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: TicketDetailsProps) {
@@ -1130,7 +1135,7 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
 
                 return (
                   <div key={comment.id} className="relative rounded-lg bg-[linear-gradient(135deg,rgba(248,250,252,0.82)_0%,rgba(255,255,255,0.96)_100%)] p-3 shadow-[inset_0_0_0_1px_rgba(226,232,240,0.45)] transition-shadow hover:shadow-[inset_0_0_0_1px_rgba(148,163,184,0.4)] dark:bg-none dark:bg-slate-900 dark:shadow-[inset_0_0_0_1px_rgba(51,65,85,0.8)] dark:hover:shadow-[inset_0_0_0_1px_rgba(71,85,105,0.9)]">
-                    <div className="absolute -left-[31px] top-4 h-2 w-2 rounded-full bg-sky-200 shadow-[0_0_0_4px_white,0_0_0_7px_rgba(219,234,254,0.9)] dark:bg-sky-300 dark:shadow-[0_0_0_4px_#020617,0_0_0_7px_rgba(56,189,248,0.28)]" />
+                    <div className="absolute -left-[28px] top-4 h-2 w-2 rounded-full bg-sky-200 shadow-[0_0_0_4px_white,0_0_0_7px_rgba(219,234,254,0.9)] dark:bg-sky-300 dark:shadow-[0_0_0_4px_#020617,0_0_0_7px_rgba(56,189,248,0.28)]" />
 
                     <div className="flex items-start justify-between gap-3">
                       <button

@@ -34,6 +34,15 @@ import { createTicket, deleteTicket, importEmailPreview, updateTicket } from './
 
 type DeadlineFilter = 'all' | 'overdue' | 'today' | 'this_week' | 'none';
 type TicketSort = 'changed_desc' | 'created_desc' | 'priority_desc' | 'deadline_asc';
+const STATUS_FILTER_OPTIONS: Array<{ value: TicketStatus | 'all'; label: string }> = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'new', label: 'New' },
+  { value: 'open', label: 'Open' },
+  { value: 'in_progress', label: 'In Progress' },
+  { value: 'waiting', label: 'Waiting' },
+  { value: 'resolved', label: 'Resolved' },
+  { value: 'closed', label: 'Closed' },
+];
 const SIDEBAR_PINNED_KEY = 'handl_sidebar_pinned';
 const LEGACY_SIDEBAR_PINNED_KEY = 'taskflow_sidebar_pinned';
 const THEME_KEY = 'handl_theme';
@@ -155,11 +164,11 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showListFilters, setShowListFilters] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<TicketStatus | 'all'>('all');
   const [priorityFilter, setPriorityFilter] = useState<TicketPriority | 'all'>('all');
   const [deadlineFilter, setDeadlineFilter] = useState<DeadlineFilter>('all');
   const [ticketSort, setTicketSort] = useState<TicketSort>('changed_desc');
   const [unassignedOnly, setUnassignedOnly] = useState(false);
-  const [waitingOnly, setWaitingOnly] = useState(false);
   const [creatingFromMail, setCreatingFromMail] = useState(false);
   const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -230,7 +239,7 @@ export default function App() {
   }, [showSidebarSearch]);
 
   const hasActiveListFilters =
-    priorityFilter !== 'all' || deadlineFilter !== 'all' || unassignedOnly || waitingOnly;
+    statusFilter !== 'all' || priorityFilter !== 'all' || deadlineFilter !== 'all' || unassignedOnly;
 
   const filteredTickets = useMemo(() => {
     const todayStart = startOfToday();
@@ -244,9 +253,9 @@ export default function App() {
     };
 
     const filtered = tickets.filter((ticket) => {
+      if (statusFilter !== 'all' && ticket.status !== statusFilter) return false;
       if (priorityFilter !== 'all' && ticket.priority !== priorityFilter) return false;
       if (unassignedOnly && ticket.assigneeId) return false;
-      if (waitingOnly && ticket.status !== 'waiting') return false;
 
       const deadline = ticket.deadline?.toDate ? ticket.deadline.toDate() : null;
       if (deadlineFilter === 'none' && deadline) return false;
@@ -286,7 +295,7 @@ export default function App() {
     });
 
     return filtered;
-  }, [deadlineFilter, priorityFilter, ticketSort, tickets, unassignedOnly, waitingOnly]);
+  }, [deadlineFilter, priorityFilter, statusFilter, ticketSort, tickets, unassignedOnly]);
 
   const bulkMode = selectionMode;
 
@@ -737,16 +746,35 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => {
+                          setStatusFilter('all');
                           setPriorityFilter('all');
                           setDeadlineFilter('all');
                           setUnassignedOnly(false);
-                          setWaitingOnly(false);
                         }}
                         className="text-[10px] font-semibold text-text-light hover:text-text-dark"
                       >
                         Clear all
                       </button>
                     )}
+                  </div>
+                  <div className="mt-3">
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Status</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {STATUS_FILTER_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setStatusFilter(option.value)}
+                          className={`rounded-md border px-2 py-1 text-[11px] font-medium transition-colors ${
+                            statusFilter === option.value
+                              ? 'border-primary bg-primary/10 text-primary'
+                              : 'border-border-theme bg-white text-text-light hover:text-text-dark'
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div className="mt-3">
                     <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Priority</div>
@@ -797,7 +825,6 @@ export default function App() {
                     <div className="mt-2 flex flex-wrap gap-2">
                       {([
                         ['unassigned', 'Unassigned only', unassignedOnly, setUnassignedOnly],
-                        ['waiting', 'Waiting only', waitingOnly, setWaitingOnly],
                       ] as const).map(([key, label, active, setter]) => (
                         <button
                           key={key}
