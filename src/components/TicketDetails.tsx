@@ -334,6 +334,7 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
   const [deletingTicket, setDeletingTicket] = useState(false);
   const [editingDetails, setEditingDetails] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [detailsDraft, setDetailsDraft] = useState({
     title: ticket.title,
     requesterName: ticket.requesterName || '',
@@ -420,6 +421,10 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
     });
   }, [editingDetails, ticket.description, ticket.requesterName, ticket.title]);
 
+  useEffect(() => {
+    setDescriptionExpanded(false);
+  }, [ticket.id, ticket.description]);
+
   const applyDeadlineDate = async (nextDate: string) => {
     setDeadlineDate(nextDate);
     setSavingDeadline(true);
@@ -459,12 +464,18 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
     return text.length > 280 || lines > 6;
   };
 
-  const getCommentPreview = (comment: Comment) => {
-    const text = comment.content || '';
+  const isLongText = (text: string) => {
+    const lines = text.split(/\r?\n/);
+    return text.length > 280 || lines.length > 6;
+  };
+
+  const getTextPreview = (text: string) => {
     const lines = text.split(/\r?\n/);
     const firstLines = lines.slice(0, 4).join('\n');
     return firstLines.length > 520 ? `${firstLines.slice(0, 520).trimEnd()}...` : firstLines;
   };
+
+  const getCommentPreview = (comment: Comment) => getTextPreview(comment.content || '');
 
   const getCommentActorName = (comment: Comment) => {
     if (comment.sourceType !== 'email_import' || !comment.emailFrom) return comment.authorName;
@@ -764,6 +775,23 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
     </div>
   );
 
+  const descriptionBody = descriptionEmail ? descriptionEmail.body || 'No message body found.' : ticket.description || '';
+  const descriptionIsLong = isLongText(descriptionBody);
+  const visibleDescriptionBody = descriptionIsLong && !descriptionExpanded ? getTextPreview(descriptionBody) : descriptionBody;
+  const renderDescriptionToggle = () => (
+    descriptionIsLong ? (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="mt-3 h-7 px-2 text-[11px]"
+        onClick={() => setDescriptionExpanded((current) => !current)}
+      >
+        {descriptionExpanded ? 'Collapse description' : 'Show full description'}
+      </Button>
+    ) : null
+  );
+
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-white dark:bg-slate-950">
       <div className="min-h-[118px] p-8 flex justify-between items-start gap-6 shrink-0">
@@ -1001,14 +1029,18 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
                 </div>
                 <div className="px-4 py-3">
                   <div className="whitespace-pre-wrap rounded-md bg-white px-3 py-3 text-sm leading-relaxed text-text-dark dark:bg-slate-950">
-                    {descriptionEmail.body || 'No message body found.'}
+                    {visibleDescriptionBody}
                   </div>
+                  {renderDescriptionToggle()}
                 </div>
               </div>
             ) : (
-              <div className="text-sm text-text-dark leading-relaxed whitespace-pre-wrap">
-                {ticket.description}
-              </div>
+              <>
+                <div className="text-sm text-text-dark leading-relaxed whitespace-pre-wrap">
+                  {visibleDescriptionBody}
+                </div>
+                {renderDescriptionToggle()}
+              </>
             )}
           </section>
 
