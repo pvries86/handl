@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { useTickets } from './hooks/useTickets';
-import { Ticket, TicketStatus, TicketPriority } from './types';
+import { Ticket, TicketStatus, TicketPriority, UserProfile } from './types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -36,10 +36,11 @@ import { CreateTicketDialog } from './components/CreateTicket';
 import { TicketDetailsDialog } from './components/TicketDetails';
 import { Toaster } from '@/components/ui/sonner';
 import { UserManagement } from './components/UserManagement';
-import { createTicket, deleteTicket, importEmailPreview, updateTicket } from './lib/api';
+import { createTicket, deleteTicket, importEmailPreview, listAgents, updateTicket } from './lib/api';
 
 type DeadlineFilter = 'all' | 'overdue' | 'today' | 'this_week' | 'none';
 type TicketSort = 'changed_desc' | 'created_desc' | 'priority_desc' | 'deadline_asc';
+type AssignmentFilter = 'all' | 'unassigned' | `agent:${string}`;
 const STATUS_FILTER_OPTIONS: Array<{ value: TicketStatus | 'all'; label: string }> = [
   { value: 'all', label: 'All statuses' },
   { value: 'new', label: 'New' },
@@ -188,7 +189,8 @@ export default function App() {
   const [priorityFilter, setPriorityFilter] = useState<TicketPriority | 'all'>('all');
   const [deadlineFilter, setDeadlineFilter] = useState<DeadlineFilter>('all');
   const [ticketSort, setTicketSort] = useState<TicketSort>('changed_desc');
-  const [unassignedOnly, setUnassignedOnly] = useState(false);
+  const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('all');
+  const [assignableAgents, setAssignableAgents] = useState<UserProfile[]>([]);
   const [creatingFromMail, setCreatingFromMail] = useState(false);
   const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -217,6 +219,30 @@ export default function App() {
   const selectedStatusFilterLabel = STATUS_FILTER_OPTIONS.find((option) => option.value === statusFilter)?.label || 'All statuses';
   const selectedPriorityFilterLabel = PRIORITY_FILTER_OPTIONS.find((option) => option.value === priorityFilter)?.label || 'All priorities';
   const selectedDeadlineFilterLabel = DEADLINE_FILTER_OPTIONS.find((option) => option.value === deadlineFilter)?.label || 'Any due date';
+  const assignmentCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    let unassigned = 0;
+
+    for (const ticket of tickets) {
+      if (ticket.assigneeId) {
+        counts.set(ticket.assigneeId, (counts.get(ticket.assigneeId) || 0) + 1);
+      } else {
+        unassigned += 1;
+      }
+    }
+
+    return { counts, unassigned };
+  }, [tickets]);
+  const assignmentFilterOptions = useMemo(() => [
+    { value: 'all' as AssignmentFilter, label: 'Any assignment' },
+    { value: 'unassigned' as AssignmentFilter, label: `Unassigned (${assignmentCounts.unassigned})` },
+    ...assignableAgents.map((agent) => ({
+      value: `agent:${agent.uid}` as AssignmentFilter,
+      label: `${agent.displayName} (${assignmentCounts.counts.get(agent.uid) || 0})`,
+    })),
+  ], [assignableAgents, assignmentCounts]);
+  const selectedAssignmentFilterLabel =
+    assignmentFilterOptions.find((option) => option.value === assignmentFilter)?.label || 'Any assignment';
 
   useEffect(() => {
     if (!profile) return;
@@ -227,6 +253,27 @@ export default function App() {
       setActiveTab('all');
     }
   }, [activeTab, profile]);
+
+  useEffect(() => {
+    if (!user) {
+      setAssignableAgents([]);
+      return;
+    }
+
+    let cancelled = false;
+    listAgents()
+      .then((agents) => {
+        if (!cancelled) setAssignableAgents(agents);
+      })
+      .catch((error) => {
+        console.error('Failed to load assignment filter agents', error);
+        if (!cancelled) setAssignableAgents([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -262,7 +309,7 @@ export default function App() {
   }, [showSidebarSearch]);
 
   const hasActiveListFilters =
-    statusFilter !== 'all' || priorityFilter !== 'all' || deadlineFilter !== 'all' || unassignedOnly;
+    statusFilter !== 'all' || priorityFilter !== 'all' || deadlineFilter !== 'all' || assignmentFilter !== 'all';
 
   const filteredTickets = useMemo(() => {
     const todayStart = startOfToday();
@@ -278,7 +325,8 @@ export default function App() {
     const filtered = tickets.filter((ticket) => {
       if (statusFilter !== 'all' && ticket.status !== statusFilter) return false;
       if (priorityFilter !== 'all' && ticket.priority !== priorityFilter) return false;
-      if (unassignedOnly && ticket.assigneeId) return false;
+      if (assignmentFilter === 'unassigned' && ticket.assigneeId) return false;
+      if (assignmentFilter.startsWith('agent:') && ticket.assigneeId !== assignmentFilter.slice('agent:'.length)) return false;
 
       const deadline = ticket.deadline?.toDate ? ticket.deadline.toDate() : null;
       if (deadlineFilter === 'none' && deadline) return false;
@@ -318,7 +366,7 @@ export default function App() {
     });
 
     return filtered;
-  }, [deadlineFilter, priorityFilter, statusFilter, ticketSort, tickets, unassignedOnly]);
+  }, [assignmentFilter, deadlineFilter, priorityFilter, statusFilter, ticketSort, tickets]);
 
   const bulkMode = selectionMode;
 
@@ -772,7 +820,7 @@ export default function App() {
                           setStatusFilter('all');
                           setPriorityFilter('all');
                           setDeadlineFilter('all');
-                          setUnassignedOnly(false);
+                          setAssignmentFilter('all');
                         }}
                         className="text-[10px] font-semibold text-text-light hover:text-text-dark"
                       >
@@ -780,7 +828,7 @@ export default function App() {
                       </button>
                     )}
                   </div>
-                  <div className="mt-3 grid gap-3">
+                  <div className="mt-3 grid grid-cols-2 gap-3">
                     <div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Status</div>
                       <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as TicketStatus | 'all')}>
@@ -850,26 +898,20 @@ export default function App() {
                         </SelectContent>
                       </Select>
                     </div>
-                  </div>
-                  <div className="mt-3">
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Queue</div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {([
-                        ['unassigned', 'Unassigned only', unassignedOnly, setUnassignedOnly],
-                      ] as const).map(([key, label, active, setter]) => (
-                        <button
-                          key={key}
-                          type="button"
-                          onClick={() => setter(!active)}
-                          className={`rounded-md border px-2 py-1 text-[11px] font-medium transition-colors ${
-                            active
-                              ? 'border-primary bg-primary/10 text-primary'
-                              : 'border-border-theme bg-white text-text-light hover:text-text-dark'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Queue</div>
+                      <Select value={assignmentFilter} onValueChange={(value) => setAssignmentFilter(value as AssignmentFilter)}>
+                        <SelectTrigger className="mt-2 h-8 w-full bg-white text-xs dark:bg-slate-950 dark:text-slate-100">
+                          <span className="truncate">{selectedAssignmentFilterLabel}</span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {assignmentFilterOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                 </div>
