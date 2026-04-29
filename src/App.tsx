@@ -7,6 +7,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from '@/components/ui/select';
 import { 
   Search, 
   Filter, 
@@ -42,6 +48,20 @@ const STATUS_FILTER_OPTIONS: Array<{ value: TicketStatus | 'all'; label: string 
   { value: 'waiting', label: 'Waiting' },
   { value: 'resolved', label: 'Resolved' },
   { value: 'closed', label: 'Closed' },
+];
+const PRIORITY_FILTER_OPTIONS: Array<{ value: TicketPriority | 'all'; label: string }> = [
+  { value: 'all', label: 'All priorities' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'critical', label: 'Critical' },
+];
+const DEADLINE_FILTER_OPTIONS: Array<{ value: DeadlineFilter; label: string }> = [
+  { value: 'all', label: 'Any due date' },
+  { value: 'overdue', label: 'Overdue' },
+  { value: 'today', label: 'Due today' },
+  { value: 'this_week', label: 'Due this week' },
+  { value: 'none', label: 'No due date' },
 ];
 const SIDEBAR_PINNED_KEY = 'handl_sidebar_pinned';
 const LEGACY_SIDEBAR_PINNED_KEY = 'taskflow_sidebar_pinned';
@@ -194,6 +214,9 @@ export default function App() {
   const { tickets, loading: ticketsLoading } = useTickets(activeTab, user?.uid, user?.email || undefined, searchQuery);
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const sidebarExpanded = sidebarPinned;
+  const selectedStatusFilterLabel = STATUS_FILTER_OPTIONS.find((option) => option.value === statusFilter)?.label || 'All statuses';
+  const selectedPriorityFilterLabel = PRIORITY_FILTER_OPTIONS.find((option) => option.value === priorityFilter)?.label || 'All priorities';
+  const selectedDeadlineFilterLabel = DEADLINE_FILTER_OPTIONS.find((option) => option.value === deadlineFilter)?.label || 'Any due date';
 
   useEffect(() => {
     if (!profile) return;
@@ -757,67 +780,75 @@ export default function App() {
                       </button>
                     )}
                   </div>
-                  <div className="mt-3">
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Status</div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {STATUS_FILTER_OPTIONS.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() => setStatusFilter(option.value)}
-                          className={`rounded-md border px-2 py-1 text-[11px] font-medium transition-colors ${
-                            statusFilter === option.value
-                              ? 'border-primary bg-primary/10 text-primary'
-                              : 'border-border-theme bg-white text-text-light hover:text-text-dark'
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
+                  <div className="mt-3 grid gap-3">
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Status</div>
+                      <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as TicketStatus | 'all')}>
+                        <SelectTrigger className="mt-2 h-8 w-full bg-white text-xs dark:bg-slate-950 dark:text-slate-100">
+                          {statusFilter === 'all' ? (
+                            <span>{selectedStatusFilterLabel}</span>
+                          ) : (
+                            <span className={`status-pill inline-flex rounded-full px-2 py-0.5 text-[10px] ${getStatusClass(statusFilter)}`}>
+                              {selectedStatusFilterLabel}
+                            </span>
+                          )}
+                        </SelectTrigger>
+                        <SelectContent>
+                          {STATUS_FILTER_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.value === 'all' ? (
+                                option.label
+                              ) : (
+                                <span className={`status-pill inline-flex rounded-full px-2 py-0.5 text-[10px] ${getStatusClass(option.value)}`}>
+                                  {option.label}
+                                </span>
+                              )}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
-                  </div>
-                  <div className="mt-3">
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Priority</div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                    {(['all', 'low', 'medium', 'high', 'critical'] as const).map((value) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => setPriorityFilter(value)}
-                        className={`rounded-md border px-2 py-1 text-[11px] font-medium transition-colors ${
-                          priorityFilter === value
-                            ? 'border-primary bg-primary/10 text-primary'
-                            : 'border-border-theme bg-white text-text-light hover:text-text-dark'
-                        }`}
-                      >
-                        {value === 'all' ? 'All priorities' : value}
-                      </button>
-                    ))}
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Priority</div>
+                      <Select value={priorityFilter} onValueChange={(value) => setPriorityFilter(value as TicketPriority | 'all')}>
+                        <SelectTrigger className="mt-2 h-8 w-full bg-white text-xs dark:bg-slate-950 dark:text-slate-100">
+                          {priorityFilter === 'all' ? (
+                            <span>{selectedPriorityFilterLabel}</span>
+                          ) : (
+                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${getPriorityClass(priorityFilter)}`}>
+                              {selectedPriorityFilterLabel}
+                            </span>
+                          )}
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PRIORITY_FILTER_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.value === 'all' ? (
+                                option.label
+                              ) : (
+                                <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${getPriorityClass(option.value)}`}>
+                                  {option.label}
+                                </span>
+                              )}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
-                  </div>
-                  <div className="mt-3">
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Due Date</div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {([
-                        ['all', 'Any due date'],
-                        ['overdue', 'Overdue'],
-                        ['today', 'Due today'],
-                        ['this_week', 'Due this week'],
-                        ['none', 'No due date'],
-                      ] as const).map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={() => setDeadlineFilter(value)}
-                          className={`rounded-md border px-2 py-1 text-[11px] font-medium transition-colors ${
-                            deadlineFilter === value
-                              ? 'border-primary bg-primary/10 text-primary'
-                              : 'border-border-theme bg-white text-text-light hover:text-text-dark'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Due Date</div>
+                      <Select value={deadlineFilter} onValueChange={(value) => setDeadlineFilter(value as DeadlineFilter)}>
+                        <SelectTrigger className="mt-2 h-8 w-full bg-white text-xs dark:bg-slate-950 dark:text-slate-100">
+                          {selectedDeadlineFilterLabel}
+                        </SelectTrigger>
+                        <SelectContent>
+                          {DEADLINE_FILTER_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                   <div className="mt-3">
