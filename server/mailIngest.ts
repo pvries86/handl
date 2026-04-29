@@ -76,7 +76,7 @@ function normalizeReferences(references: ParsedMail['references']) {
   return (Array.isArray(references) ? references : [references]).map(normalizeMessageId).filter(Boolean);
 }
 
-function mailboxAddress(address: ParsedMail['from']) {
+function mailboxAddress(address: ParsedMail['from'] | ParsedMail['replyTo']) {
   const first = address?.value?.[0];
   return {
     name: first?.name?.trim() || first?.address || '',
@@ -118,8 +118,48 @@ function emailBody(mail: ParsedMail) {
   return '';
 }
 
+function extractOriginalRequesterFromBody(body: string) {
+  const headerLine = body
+    .split(/\r?\n/)
+    .slice(0, 40)
+    .map((line) => line.trim())
+    .find((line) => /^(original\s+from|original\s+sender|from|sender|reply-to)\s*:/i.test(line));
+
+  if (!headerLine) return null;
+
+  const value = headerLine.replace(/^(original\s+from|original\s+sender|from|sender|reply-to)\s*:\s*/i, '').trim();
+  const angleMatch = value.match(/^(.*?)(?:<([^>]+)>)$/);
+  if (angleMatch) {
+    return {
+      name: angleMatch[1].trim().replace(/^"|"$/g, ''),
+      email: angleMatch[2].trim().toLowerCase(),
+    };
+  }
+
+  const emailMatch = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  if (emailMatch) {
+    const email = emailMatch[0].toLowerCase();
+    return {
+      name: value.replace(emailMatch[0], '').replace(/[()<>"]/g, '').trim(),
+      email,
+    };
+  }
+
+  return null;
+}
+
+function requesterAddress(mail: ParsedMail) {
+  const replyTo = mailboxAddress(mail.replyTo);
+  if (replyTo.email) return replyTo;
+
+  const bodyRequester = extractOriginalRequesterFromBody(emailBody(mail));
+  if (bodyRequester?.email) return bodyRequester;
+
+  return mailboxAddress(mail.from);
+}
+
 function buildEmailDescription(mail: ParsedMail) {
-  const from = mailboxAddress(mail.from);
+  const from = requesterAddress(mail);
   const lines: string[] = [];
   if (mail.subject) lines.push(`Subject: ${mail.subject}`);
   if (from.email || from.name) lines.push(`From: ${from.name ? `${from.name} <${from.email}>` : from.email}`);
@@ -170,10 +210,17 @@ async function resolveTicketId(store: Store, mail: ParsedMail, gmailThreadId?: s
     ...normalizeReferences(mail.references),
   ].filter(Boolean);
 
-  return store.findTicketIdForMailMessage({
+  const referencedTicketId = await store.findTicketIdForMailMessage({
     messageIds: referenceIds,
     gmailThreadId,
   });
+  if (referencedTicketId) return referencedTicketId;
+
+  const requester = requesterAddress(mail);
+  const subjectMatchedTicket = await store.findOpenTicketByTitleAndRequester(mail.subject || '', requester.email);
+  if (subjectMatchedTicket) return subjectMatchedTicket.id;
+
+  return null;
 }
 
 async function persistMail(
@@ -183,7 +230,7 @@ async function persistMail(
   mail: ParsedMail,
   gmailThreadId?: string | null,
 ): Promise<ProcessedMail> {
-  const requester = mailboxAddress(mail.from);
+  const requester = requesterAddress(mail);
   const messageId = normalizeMessageId(mail.messageId) || null;
   const attachments = mail.attachments
     .filter((attachment) => !attachment.related)
@@ -236,15 +283,26 @@ async function archiveOrMarkSeen(client: ImapFlow, uid: number, archiveAfterProc
     return;
   }
 
-  try {
-    await client.messageFlagsRemove(String(uid), ['\\Inbox'], { uid: true, useLabels: true });
-  } catch (labelError) {
-    try {
-      await client.messageMove(String(uid), '[Gmail]/All Mail', { uid: true });
-    } catch {
-      throw labelError;
-    }
+  const allMailPath = await findArchiveMailboxPath(client);
+  if (allMailPath) {
+    const moved = await client.messageMove(String(uid), allMailPath, { uid: true });
+    if (moved) return;
   }
+
+  const removedInboxLabel = await client.messageFlagsRemove(String(uid), ['\\Inbox'], { uid: true, useLabels: true });
+  if (removedInboxLabel) return;
+
+  throw new Error('Unable to archive message by moving to All Mail or removing the Gmail Inbox label');
+}
+
+async function findArchiveMailboxPath(client: ImapFlow) {
+  const mailboxes = await client.list();
+  return (
+    mailboxes.find((mailbox) => mailbox.specialUse === '\\All')?.path ||
+    mailboxes.find((mailbox) => mailbox.specialUse === '\\Archive')?.path ||
+    mailboxes.find((mailbox) => mailbox.path.toLowerCase() === '[gmail]/all mail')?.path ||
+    null
+  );
 }
 
 function shouldAcceptMail(mail: ParsedMail, config: MailIngestConfig) {

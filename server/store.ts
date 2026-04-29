@@ -81,6 +81,15 @@ function toSqlLike(value: string) {
   return `%${value.replace(/[%_]/g, '\\$&').toLowerCase()}%`;
 }
 
+function normalizeMailSubject(subject: string) {
+  return subject
+    .replace(/\[HANDL:[a-zA-Z0-9_-]+\]/gi, '')
+    .replace(/^\s*((re|fw|fwd)\s*:\s*)+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 function adminEmails() {
   return (process.env.ADMIN_EMAILS || 'paulvries@gmail.com')
     .split(',')
@@ -623,6 +632,22 @@ export class Store {
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const order = filter === 'all' ? 'ORDER BY status ASC, created_at DESC' : 'ORDER BY created_at DESC';
     return this.queryTickets(where, params, order);
+  }
+
+  async findOpenTicketByTitleAndRequester(title: string, requesterEmail?: string): Promise<Ticket | null> {
+    const normalizedTitle = normalizeMailSubject(title);
+    if (!normalizedTitle) return null;
+
+    const conditions = ["status NOT IN ('closed', 'resolved')"];
+    const params: unknown[] = [];
+
+    if (requesterEmail?.trim()) {
+      conditions.push('LOWER(requester_email) = ?');
+      params.push(requesterEmail.trim().toLowerCase());
+    }
+
+    const tickets = await this.queryTickets(`WHERE ${conditions.join(' AND ')}`, params, 'ORDER BY created_at ASC');
+    return tickets.find((ticket) => normalizeMailSubject(ticket.title) === normalizedTitle) || null;
   }
 
   async updateTicket(id: string, updates: Partial<Ticket>): Promise<Ticket | null> {

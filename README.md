@@ -161,6 +161,8 @@ MAIL_INGEST_BOT_NAME="Handl Mail Import"
 
 When enabled, Handl checks unread Inbox messages from `MAIL_INGEST_FROM` to `MAIL_INGEST_TO`. A subject tag like `[HANDL:<ticketId>]` updates that ticket. Replies without the tag are matched through message references or Gmail thread id when possible. Otherwise, Handl creates a new ticket. Successfully imported Gmail messages are archived by removing them from the Inbox, not deleted.
 
+If a mail automation sends a new email instead of forwarding the original message, set `MAIL_INGEST_FROM` to the automation sender. To preserve the requester, set the outgoing email's Reply-To to the original sender, or include a leading body line such as `From: Requester Name <requester@example.com>`.
+
 ## API Integrations
 
 Handl exposes a JSON API that can be used from Postman, scripts, automation tools, or other integrations. For automation, create an API token and send it as:
