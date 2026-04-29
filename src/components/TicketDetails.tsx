@@ -459,6 +459,24 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
     return text.length > 280 || lines > 6;
   };
 
+  const getCommentPreview = (comment: Comment) => {
+    const text = comment.content || '';
+    const lines = text.split(/\r?\n/);
+    const firstLines = lines.slice(0, 4).join('\n');
+    return firstLines.length > 520 ? `${firstLines.slice(0, 520).trimEnd()}...` : firstLines;
+  };
+
+  const getCommentActorName = (comment: Comment) => {
+    if (comment.sourceType !== 'email_import' || !comment.emailFrom) return comment.authorName;
+
+    const angleMatch = comment.emailFrom.match(/^(.*?)(?:<([^>]+)>)$/);
+    if (angleMatch) {
+      return angleMatch[1].trim().replace(/^"|"$/g, '') || angleMatch[2].trim();
+    }
+
+    return comment.emailFrom;
+  };
+
   useEffect(() => {
     setCollapsedComments((current) => {
       const next: Record<string, boolean> = {};
@@ -996,141 +1014,12 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
 
           <FileViewer file={viewingFile} onClose={() => setViewingFile(null)} />
 
-          <section className="mt-8 space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <h4 className="text-[10px] font-bold uppercase tracking-widest text-text-light">Activity Log & Updates</h4>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 text-[11px]"
-                onClick={() => setCommentOrder((current) => (current === 'desc' ? 'asc' : 'desc'))}
-              >
-                {commentOrder === 'desc' ? 'Newest first' : 'Oldest first'}
-              </Button>
-            </div>
-            <div className="space-y-4 pl-6 shadow-[-2px_0_0_0_rgba(191,219,254,0.7)] dark:shadow-[-2px_0_0_0_rgba(51,65,85,0.9)]">
-              {orderedComments.map((comment) => {
-                const collapsed = collapsedComments[comment.id] ?? false;
-                const editing = editingCommentId === comment.id;
-                const canEdit = comment.sourceType !== 'email_import';
-
-                return (
-                  <div key={comment.id} className="relative rounded-lg bg-[linear-gradient(135deg,rgba(248,250,252,0.82)_0%,rgba(255,255,255,0.96)_100%)] p-3 shadow-[inset_0_0_0_1px_rgba(226,232,240,0.45)] transition-shadow hover:shadow-[inset_0_0_0_1px_rgba(148,163,184,0.4)] dark:bg-none dark:bg-slate-900 dark:shadow-[inset_0_0_0_1px_rgba(51,65,85,0.8)] dark:hover:shadow-[inset_0_0_0_1px_rgba(71,85,105,0.9)]">
-                    <div className="absolute -left-[31px] top-4 h-2 w-2 rounded-full bg-sky-200 shadow-[0_0_0_4px_white,0_0_0_7px_rgba(219,234,254,0.9)] dark:bg-sky-300 dark:shadow-[0_0_0_4px_#020617,0_0_0_7px_rgba(56,189,248,0.28)]" />
-
-                    <div className="flex items-start justify-between gap-3">
-                      <button
-                        type="button"
-                        className="flex-1 min-w-0 text-left"
-                        onClick={() => toggleComment(comment.id)}
-                      >
-                        <div className="flex items-center gap-2 text-[11px] mb-1 flex-wrap">
-                          {collapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                          <span className="font-bold">{comment.authorName}</span>
-                          <span className="text-text-light">
-                            {comment.createdAt?.toDate ? format(comment.createdAt.toDate(), 'MMM d, HH:mm') : 'Just now'}
-                          </span>
-                          {comment.sourceType === 'email_import' && (
-                            <Badge variant="outline" className="text-[8px] h-4 uppercase tracking-tighter bg-blue-50 text-blue-700 border-blue-200 dark:border-sky-500/30 dark:bg-sky-500/12 dark:text-sky-300">
-                              Imported Email
-                            </Badge>
-                          )}
-                        </div>
-                      </button>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        {canEdit && (
-                          <Button type="button" variant="ghost" size="icon-sm" onClick={() => beginEditComment(comment)}>
-                            <Pencil className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => removeComment(comment.id)}
-                          disabled={deletingCommentId === comment.id}
-                        >
-                          <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    {!collapsed && (
-                      <div className="mt-2 space-y-3">
-                        {comment.sourceType === 'email_import' && (
-                          <div className="rounded-lg border border-blue-100 bg-blue-50/70 dark:border-slate-700 dark:bg-slate-950">
-                            <div className="border-b border-blue-100 px-3 py-2 dark:border-slate-700">
-                              <div className="text-sm font-semibold text-text-dark">
-                                {comment.emailSubject || comment.sourceFileName || 'Imported email'}
-                              </div>
-                              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-light">
-                                {comment.emailFrom && <span><span className="font-semibold text-text-dark">From:</span> {comment.emailFrom}</span>}
-                                {comment.emailSentAt?.toDate && (
-                                  <span><span className="font-semibold text-text-dark">Sent:</span> {format(comment.emailSentAt.toDate(), 'MMM d, yyyy HH:mm')}</span>
-                                )}
-                                {comment.sourceFileName && <span><span className="font-semibold text-text-dark">File:</span> {comment.sourceFileName}</span>}
-                              </div>
-                            </div>
-                            <div className="px-3 py-3">
-                              <div className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-md bg-white px-3 py-2 text-sm leading-relaxed text-text-dark dark:bg-slate-950">
-                                {comment.content}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {editing ? (
-                          <div className="space-y-2">
-                            <Textarea
-                              value={editingCommentText}
-                              onChange={(e) => setEditingCommentText(e.target.value)}
-                              className="min-h-[140px]"
-                            />
-                            <div className="flex gap-2">
-                              <Button
-                                type="button"
-                                onClick={() => saveEditedComment(comment)}
-                                disabled={savingCommentId === comment.id}
-                              >
-                                {savingCommentId === comment.id ? 'Saving...' : 'Save'}
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() => {
-                                  setEditingCommentId(null);
-                                  setEditingCommentText('');
-                                }}
-                              >
-                                Cancel
-                              </Button>
-                            </div>
-                          </div>
-                        ) : comment.sourceType !== 'email_import' ? (
-                          <p className="text-sm text-text-dark whitespace-pre-wrap">{comment.content}</p>
-                        ) : null}
-
-                        {comment.attachments && comment.attachments.length > 0 && (
-                          <div className="flex flex-wrap gap-2">
-                            {comment.attachments.map((attachment) => renderAttachmentChip(attachment))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="mt-8 flex flex-1 min-h-[340px] flex-col space-y-4">
+          <section className="mt-8 flex min-h-[340px] flex-col space-y-4">
             <div className="text-[10px] font-bold uppercase tracking-widest text-text-light">Add Update</div>
-            <form id="ticket-update-form" onSubmit={handleAddComment} className="flex flex-1 flex-col space-y-4">
+            <form id="ticket-update-form" onSubmit={handleAddComment} className="flex flex-col space-y-4">
               <Textarea
                 placeholder="Add an update..."
-                className="min-h-[180px] flex-1 bg-white border-border-theme rounded-xl p-4 text-sm focus-visible:ring-primary dark:bg-slate-900 dark:text-slate-100"
+                className="min-h-[180px] bg-white border-border-theme rounded-xl p-4 text-sm focus-visible:ring-primary dark:bg-slate-900 dark:text-slate-100"
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
                 onKeyDown={(e) => {
@@ -1185,6 +1074,146 @@ export function TicketDetailsDialog({ ticket, onClose, onTicketDeleted }: Ticket
                 )}
               </div>
             </form>
+          </section>
+
+          <section className="mt-8 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-[10px] font-bold uppercase tracking-widest text-text-light">Activity Log & Updates</h4>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 text-[11px]"
+                onClick={() => setCommentOrder((current) => (current === 'desc' ? 'asc' : 'desc'))}
+              >
+                {commentOrder === 'desc' ? 'Newest first' : 'Oldest first'}
+              </Button>
+            </div>
+            <div className="space-y-4 pl-6 shadow-[-2px_0_0_0_rgba(191,219,254,0.7)] dark:shadow-[-2px_0_0_0_rgba(51,65,85,0.9)]">
+              {orderedComments.map((comment) => {
+                const collapsed = collapsedComments[comment.id] ?? false;
+                const editing = editingCommentId === comment.id;
+                const canEdit = comment.sourceType !== 'email_import';
+                const isLong = isLongComment(comment);
+
+                return (
+                  <div key={comment.id} className="relative rounded-lg bg-[linear-gradient(135deg,rgba(248,250,252,0.82)_0%,rgba(255,255,255,0.96)_100%)] p-3 shadow-[inset_0_0_0_1px_rgba(226,232,240,0.45)] transition-shadow hover:shadow-[inset_0_0_0_1px_rgba(148,163,184,0.4)] dark:bg-none dark:bg-slate-900 dark:shadow-[inset_0_0_0_1px_rgba(51,65,85,0.8)] dark:hover:shadow-[inset_0_0_0_1px_rgba(71,85,105,0.9)]">
+                    <div className="absolute -left-[31px] top-4 h-2 w-2 rounded-full bg-sky-200 shadow-[0_0_0_4px_white,0_0_0_7px_rgba(219,234,254,0.9)] dark:bg-sky-300 dark:shadow-[0_0_0_4px_#020617,0_0_0_7px_rgba(56,189,248,0.28)]" />
+
+                    <div className="flex items-start justify-between gap-3">
+                      <button
+                        type="button"
+                        className="flex-1 min-w-0 text-left"
+                        onClick={() => toggleComment(comment.id)}
+                      >
+                        <div className="flex items-center gap-2 text-[11px] mb-1 flex-wrap">
+                          {collapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                          <span className="font-bold">{getCommentActorName(comment)}</span>
+                          <span className="text-text-light">
+                            {comment.createdAt?.toDate ? format(comment.createdAt.toDate(), 'MMM d, HH:mm') : 'Just now'}
+                          </span>
+                          {comment.sourceType === 'email_import' && (
+                            <Badge variant="outline" className="text-[8px] h-4 uppercase tracking-tighter bg-blue-50 text-blue-700 border-blue-200 dark:border-sky-500/30 dark:bg-sky-500/12 dark:text-sky-300">
+                              Imported Email
+                            </Badge>
+                          )}
+                        </div>
+                      </button>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {canEdit && (
+                          <Button type="button" variant="ghost" size="icon-sm" onClick={() => beginEditComment(comment)}>
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => removeComment(comment.id)}
+                          disabled={deletingCommentId === comment.id}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 space-y-3">
+                        {comment.sourceType === 'email_import' && (
+                          <div className="rounded-lg border border-blue-100 bg-blue-50/70 dark:border-slate-700 dark:bg-slate-950">
+                            <div className="border-b border-blue-100 px-3 py-2 dark:border-slate-700">
+                              <div className="text-sm font-semibold text-text-dark">
+                                {comment.emailSubject || comment.sourceFileName || 'Imported email'}
+                              </div>
+                              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-light">
+                                {comment.emailFrom && <span><span className="font-semibold text-text-dark">From:</span> {comment.emailFrom}</span>}
+                                {comment.emailSentAt?.toDate && (
+                                  <span><span className="font-semibold text-text-dark">Sent:</span> {format(comment.emailSentAt.toDate(), 'MMM d, yyyy HH:mm')}</span>
+                                )}
+                                {comment.sourceFileName && <span><span className="font-semibold text-text-dark">File:</span> {comment.sourceFileName}</span>}
+                              </div>
+                            </div>
+                            <div className="px-3 py-3">
+                              <div className={`whitespace-pre-wrap rounded-md bg-white px-3 py-2 text-sm leading-relaxed text-text-dark dark:bg-slate-950 ${collapsed ? '' : 'max-h-[420px] overflow-auto'}`}>
+                                {collapsed ? getCommentPreview(comment) : comment.content}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {editing ? (
+                          <div className="space-y-2">
+                            <Textarea
+                              value={editingCommentText}
+                              onChange={(e) => setEditingCommentText(e.target.value)}
+                              className="min-h-[140px]"
+                            />
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                onClick={() => saveEditedComment(comment)}
+                                disabled={savingCommentId === comment.id}
+                              >
+                                {savingCommentId === comment.id ? 'Saving...' : 'Save'}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => {
+                                  setEditingCommentId(null);
+                                  setEditingCommentText('');
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        ) : comment.sourceType !== 'email_import' ? (
+                          <p className="text-sm text-text-dark whitespace-pre-wrap">{collapsed ? getCommentPreview(comment) : comment.content}</p>
+                        ) : null}
+
+                        {isLong && !editing && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-[11px]"
+                            onClick={() => toggleComment(comment.id)}
+                          >
+                            {collapsed ? 'Show full update' : 'Collapse update'}
+                          </Button>
+                        )}
+
+                        {comment.attachments && comment.attachments.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {comment.attachments.map((attachment) => renderAttachmentChip(attachment))}
+                          </div>
+                        )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </section>
 
           {ticket.attachments && ticket.attachments.length > 0 && (

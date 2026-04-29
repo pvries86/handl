@@ -149,13 +149,13 @@ MAIL_INGEST_ENABLED=true
 MAIL_INGEST_HOST=imap.gmail.com
 MAIL_INGEST_PORT=993
 MAIL_INGEST_SECURE=true
-MAIL_INGEST_USER=org@veridox.nl
-MAIL_INGEST_PASSWORD=your-gmail-app-password
-MAIL_INGEST_FROM=paul@org.com
-MAIL_INGEST_TO=org@veridox.nl
+MAIL_INGEST_USER=support@example.com
+MAIL_INGEST_PASSWORD=your-app-password
+MAIL_INGEST_FROM=requester@example.com
+MAIL_INGEST_TO=support@example.com
 MAIL_INGEST_POLL_SECONDS=300
 MAIL_INGEST_ARCHIVE_AFTER_PROCESSING=true
-MAIL_INGEST_BOT_EMAIL=org@veridox.nl
+MAIL_INGEST_BOT_EMAIL=mail-import@example.com
 MAIL_INGEST_BOT_NAME="Handl Mail Import"
 ```
 

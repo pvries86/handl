@@ -84,6 +84,13 @@ function mailboxAddress(address: ParsedMail['from']) {
   };
 }
 
+function formatMailboxAddress(address: ReturnType<typeof mailboxAddress>) {
+  if (address.name && address.email && address.name !== address.email) {
+    return `${address.name} <${address.email}>`;
+  }
+  return address.email || address.name;
+}
+
 function addressListIncludes(addresses: ParsedMail['to'], email: string) {
   const list = Array.isArray(addresses) ? addresses : addresses ? [addresses] : [];
   return list.some((entry) => entry.value.some((address) => address.address?.trim().toLowerCase() === email));
@@ -194,7 +201,7 @@ async function persistMail(
       sourceType: 'email_import',
       sourceFileName: mail.subject || undefined,
       emailSubject: mail.subject || undefined,
-      emailFrom: requester.email || requester.name || undefined,
+      emailFrom: formatMailboxAddress(requester) || undefined,
       emailSentAt: mail.date?.toISOString() || undefined,
     });
 
